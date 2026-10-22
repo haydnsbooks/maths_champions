@@ -13,8 +13,7 @@ A class multiplayer maths fluency game. Every student answers questions at **the
 ### A. Google Sheet + Apps Script
 1. Create a new Google Sheet (e.g. "Trials of Olympus Data").
 2. **Extensions → Apps Script.** Delete the starter code.
-3. Create five script files and paste in the matching file from `server/`:
-   `Config.gs`, `Store.gs`, `Fluency.gs`, `Rooms.gs`, `Code.gs` (copy the contents of `server/Config.js` into `Config.gs`, etc.).
+3. Open the file **Code.gs**, delete everything in it, and paste in the **whole** of `apps-script/Code.gs` from this folder (it contains all the server code in one file). Press **Save**.
 4. Project Settings (⚙️) → tick **Show "appsscript.json"** → paste `server/appsscript.json` into it.
 5. In the editor choose the function **`setup`** and press **Run**. Approve the permissions. This creates the sheets **Students, Profiles, Attempts, Settings**.
 6. In the sheet:
@@ -78,6 +77,7 @@ js/celebrate.js       Results/podium + confetti (shared)
 js/student.js         Student screens: login, menu, practice, my levels, class game
 js/teacher.js         Teacher screens: room, start, results, cut-offs, class levels
 js/demo/mock-gas.js   Fake Google services for demo + tests (NOT for Apps Script)
+apps-script/Code.gs   ALL server code in one file — this is what you paste into Apps Script (built from server/)
 server/Config.js      Server rules: points, fluency, dust, timing, team names ← server settings
 server/Code.js        API router: list of actions
 server/Store.js       All Sheet/Cache reads & writes, setup()
@@ -88,6 +88,8 @@ tests/run-tests.js    `node tests/run-tests.js` — checks 2,000 questions per l
 **Adding a level:** add it in `js/levels.js`, update `LEVEL_COUNTS` in `server/Config.js` (and the spec arrays in `tests/run-tests.js`), run the tests, redeploy. Add new levels at the **end** of a list — profiles store levels by number, so inserting in the middle shifts students' history.
 
 **Adding a server action:** add it to `ACTIONS` in `server/Code.js`, call it with `API.call('name', {...})`.
+
+**After changing anything in `server/`:** run `node tools/build-apps-script.js` to rebuild `apps-script/Code.gs`, paste that into Apps Script, Save, and deploy a new version.
 
 ## 6. Data
 - **Attempts** sheet: one row per game per student (timestamp, id, name, mode, op, level, correct, wrong, seconds, avgTime, points, room) — use it for reporting/filters.

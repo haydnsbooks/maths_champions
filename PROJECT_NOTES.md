@@ -9,7 +9,7 @@
 - Cut-offs are per operation (4 values on the teacher page) rather than one global value, because e.g. 5-digit addition can't reasonably share a cut-off with ×2.
 - Multiplication questions randomly show either factor first (`SWAP_FACTORS` in `js/levels.js`).
 - After a wrong answer the correct answer shows for 0.9 s, then a new question appears.
-- Server code is kept as `.js` in `server/` so the demo and tests can run the exact same code; paste into Apps Script as `.gs` files.
+- Server code is kept as `.js` in `server/` so the demo and tests can run the exact same code. `node tools/build-apps-script.js` joins them into `apps-script/Code.gs`, the single file Haydn pastes into Apps Script (his project has just Code.gs).
 
 ## v2 changes (22 Oct 2026, Haydn's requests)
 - ✕ Leave buttons on countdown + play screens (class games ask to confirm; leaving mid-round calls `leaveRoom`).
