@@ -195,7 +195,6 @@
       S.session.profile = saved.profile; saveSession();
     } catch (e) { err = e; if (e.code === 'SESSION_EXPIRED') return fail(e); }
     var st = S.session.profile[op].levels[level - 1], sum = S.session.profile[op];
-    var need = 3;
     var each = res.correct ? (res.seconds / res.correct) : null;
     render('<div class="card temple narrow center">' +
       '<h2>' + (res.correct ? 'Well fought!' : 'Keep training!') + '</h2>' +
@@ -207,8 +206,7 @@
       (err ? '<p class="warn">Couldn\'t save this game: ' + esc(err.message) + '</p>' :
         !saved.saved ? '<p class="muted">This game was too short to save.</p>' :
         '<p>' + (st.fluent ? '✅ You are <b>fluent</b> at this level (' + st.time.toFixed(2) + ' s)!' :
-          'Your fluency time here: <b>' + st.time.toFixed(2) + ' s</b> (goal: ' + sum.cutoff + ' s' +
-          (st.recent.length < need ? ', ' + st.recent.length + ' of ' + need + ' tries done' : '') + ')') + '</p>') +
+          'Your fluency time here: <b>' + st.time.toFixed(2) + ' s</b> (goal: ' + sum.cutoff + ' s or faster)') + '</p>') +
       '<div class="choice-row"><button class="btn primary" id="again">Play again</button><button class="btn" id="lvls">Levels</button><button class="btn ghost" id="menu">Menu</button></div></div>');
     on('#again', 'click', function () { runPractice(op, level); });
     on('#lvls', 'click', function () { showPracticeLevels(op); });

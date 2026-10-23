@@ -1,0 +1,20 @@
+/* =====================================================================
+   NUMBER PAD FLIP BUTTON (play screen)
+   Sits to the right of the pad. Swaps 7-8-9-on-top (calculator) and
+   1-2-3-on-top (phone). Gold tint when the phone order is on.
+   Loaded after style.css, so it uses the same colour tokens.
+   ===================================================================== */
+/* No double-tap zoom anywhere on the play screen (backed up by a touchend handler in js/game.js) */
+.play, .play * { touch-action: manipulation; }
+.pad-wrap { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: stretch; }
+.pad-flip {
+  font: inherit; font-weight: 800; font-size: .85rem; color: #fff; width: 58px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
+  background: rgba(255, 255, 255, .12); border: 1px solid rgba(255, 255, 255, .3); border-radius: var(--r-control);
+  cursor: pointer; touch-action: manipulation; padding: 8px 4px;
+}
+.pad-flip-icon { font-size: 1.8rem; line-height: 1; color: var(--gold-light); }
+.pad-flip[aria-pressed="true"] { background: rgba(244, 210, 122, .22); border-color: var(--gold-light); }
+.pad-flip:active { transform: translateY(2px); }
+.play.finished .pad-flip { opacity: .4; pointer-events: none; }
+@media (max-width: 420px) { .pad-flip { width: 48px; font-size: .75rem; } }
