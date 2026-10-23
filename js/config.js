@@ -9,6 +9,7 @@ window.APP_CONFIG = {
 
   // ---- Polling (how often screens ask the server "anything new?") ----
   // Each poll is a cache read on the server (no sheet access). Nothing is polled while a game is being played.
+  // Student polls also tell the server "I'm still on the class-game screen" — see PRESENCE_TTL_SEC in server/Config.js.
   LOBBY_POLL_MS: 3000,      // students waiting in the lobby. Keep below START_DELAY_MS in server/Config.js
   RESULTS_POLL_MS: 4000,    // students waiting for results / the next round
   NO_ROOM_POLL_MS: 6000,    // students who pressed Multiplayer before the teacher opened a room
@@ -18,7 +19,7 @@ window.APP_CONFIG = {
   // ---- Choices shown on screen ----
   PRACTICE_SECONDS: 60,     // every practice round is this long
   GAME_SECONDS: [60, 90, 120, 180, 300],
-  TEAM_SIZES: [1, 2, 3, 4, 5, 6],   // 1 = individual play
+  TEAM_COUNTS: [0, 2, 3, 4, 5, 6, 7, 8],   // number of teams the teacher can pick; 0 = individual play
 
   // ---- Feel ----
   WRONG_PAUSE_MS: 900,      // how long the correct answer shows after a wrong answer

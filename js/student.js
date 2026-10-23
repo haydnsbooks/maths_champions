@@ -301,7 +301,7 @@
   function handleRoom(room) {
     var mp = S.mp;
     if (!mp) return;
-    if (!room.joined) { // removed by teacher, or a new room was opened
+    if (!room.joined) { // removed by teacher, dropped after going quiet (e.g. iPad slept), or a new room was opened
       return API.call('joinRoom', { token: S.session.token }).then(function (r) { if (S.mp === mp) { handleRoom(r.room); } }).catch(function () { roomClosed(); });
     }
     var g = room.game;
@@ -381,5 +381,10 @@
 
   /* ---------- start ---------- */
   try { S.session = JSON.parse(store.getItem(KEY)); } catch (e) { S.session = null; }
-  if (S.session && S.session.token) showMenu(); else showLogin();
+  if (S.session && S.session.token) {
+    // A freshly loaded page always opens on the menu, never the class-game screen. If this iPad was in the
+    // game room before a reload, take it out now so the teacher doesn't see (or team up) a student who isn't there.
+    API.call('leaveRoom', { token: S.session.token }).catch(function () {});
+    showMenu();
+  } else showLogin();
 })();

@@ -1,13 +1,13 @@
 /**
  * TEACHER APP (teacher.html)
- * Login -> dashboard: open a room, choose operation / team size / time, start, see results.
+ * Login -> dashboard: open a room, choose operation / number of teams / time, start, see results.
  * Also: fluency cut-off settings and a class overview of everyone's levels.
  */
 (function () {
   var C = window.APP_CONFIG, esc = Game.esc, store = API.storage, KEY = 'fg_teacher';
   var app = document.getElementById('app');
   var T = { token: null, code: null, cutoffs: null, rules: null, timer: null, room: null, showMembers: false, finishing: false,
-            choice: { op: 'add', teamSize: 4, seconds: 120 }, shownResultsRound: null };
+            choice: { op: 'add', teams: 4, seconds: 120 }, shownResultsRound: null };
 
   function render(html) { app.innerHTML = html; }
   function on(sel, ev, fn) { var n = app.querySelector(sel); if (n) n.addEventListener(ev, fn); }
@@ -83,6 +83,14 @@
     return '<select id="' + id + '">' + options.map(function (o) { return '<option value="' + o[0] + '"' + (String(o[0]) === String(value) ? ' selected' : '') + '>' + esc(o[1]) + '</option>'; }).join('') + '</select>';
   }
 
+  /** e.g. "25 students → 6 teams of 4–5". Matches how the server splits players (sizes differ by at most 1). */
+  function teamHint(players, teams) {
+    if (!players) return 'Teams are made when you press Start.';
+    if (!teams || teams <= 1 || teams >= players) return players + ' student' + (players === 1 ? '' : 's') + ' → each plays solo';
+    var small = Math.floor(players / teams), big = Math.ceil(players / teams);
+    return players + ' students → ' + teams + ' teams of ' + (small === big ? small : small + '–' + big);
+  }
+
   function drawLobby(room) {
     var ch = T.choice;
     // Only redraw when the player list changes, so open drop-downs aren't interrupted.
@@ -92,29 +100,34 @@
       roomEl().innerHTML =
         '<div class="lobby-grid">' +
           '<section class="card"><h2>Students joined: <span class="count">' + room.players.length + '</span></h2>' +
-            '<p class="muted">Students log in and press <b>🏁 Class game</b>. Click a name to remove it.</p>' +
+            '<p class="muted">Students log in and press <b>⚔️ Class game</b>. Only students on that screen right now are listed. Click a name to remove it.</p>' +
             '<div class="chips">' + (room.players.length ? room.players.map(function (p) { return '<button class="chip" data-id="' + esc(p.id) + '">' + esc(p.name) + ' ✕</button>'; }).join('') : '<span class="muted">Nobody yet…</span>') + '</div></section>' +
           '<section class="card"><h2>Game settings</h2>' +
             '<label>Operation' + select('op', Levels.ORDER.map(function (o) { return [o, Levels.OPS[o].symbol + '  ' + Levels.OPS[o].name]; }), ch.op) + '</label>' +
-            '<label>Teams' + select('ts', C.TEAM_SIZES.map(function (n) { return [n, n === 1 ? 'Individual play' : n + ' per team']; }), ch.teamSize) + '</label>' +
+            '<label>Teams' + select('teams', C.TEAM_COUNTS.map(function (n) { return [n, n <= 1 ? 'Individual play' : n + ' teams']; }), ch.teams) + '</label>' +
+            '<p class="muted small" id="team-hint"></p>' +
             '<label>Time' + select('secs', C.GAME_SECONDS.map(function (s) { return [s, s < 60 ? s + ' seconds' : (s / 60) + ' minute' + (s === 60 ? '' : 's')]; }), ch.seconds) + '</label>' +
             '<p class="muted small">Each student gets questions at their own level for this operation. Teams are balanced using everyone\'s recent times.</p>' +
             '<button class="btn huge primary" id="start"' + (room.players.length ? '' : ' disabled') + '>▶ Start round ' + (room.round + 1) + '</button>' +
             '<button class="btn ghost small" id="close">Close room</button>' +
           '</section></div>';
+      var hint = function () { var h = app.querySelector('#team-hint'); if (h) h.textContent = teamHint(T.room.players.length, T.choice.teams); };
+      hint();
       app.querySelectorAll('[data-id]').forEach(function (b) {
         b.addEventListener('click', function () { call('removePlayer', { id: b.getAttribute('data-id') }).then(function (r) { drawRoom(r.room); }).catch(fail); });
       });
-      ['op', 'ts', 'secs'].forEach(function (id) {
+      ['op', 'teams', 'secs'].forEach(function (id) {
         on('#' + id, 'change', function () {
-          T.choice = { op: app.querySelector('#op').value, teamSize: Number(app.querySelector('#ts').value), seconds: Number(app.querySelector('#secs').value) };
-          save();
+          T.choice = { op: app.querySelector('#op').value, teams: Number(app.querySelector('#teams').value), seconds: Number(app.querySelector('#secs').value) };
+          save(); hint();
         });
       });
       on('#start', 'click', function () {
         var b = app.querySelector('#start'); b.disabled = true; b.textContent = 'Forming teams…';
         stop();
-        call('startGame', T.choice).then(function (r) { drawRoom(r.room); }).catch(function (e) { b.disabled = false; fail(e); });
+        call('startGame', T.choice).then(function (r) { drawRoom(r.room); }).catch(function (e) {
+          b.disabled = false; b.textContent = '▶ Start round ' + (room.round + 1); fail(e); schedule(C.TEACHER_POLL_MS);
+        });
       });
       on('#close', 'click', closeRoom);
     }
@@ -133,7 +146,7 @@
     var phase = now < g.startAt ? 'countdown' : now < g.endAt ? 'running' : 'collecting';
     roomEl().innerHTML =
       '<div class="card center playing-card">' +
-        '<p class="muted">' + Levels.OPS[g.op].symbol + ' ' + Levels.OPS[g.op].name + ' · ' + (g.teamSize === 1 ? 'Individual play' : g.teams.length + ' teams') + ' · ' + g.expected + ' players</p>' +
+        '<p class="muted">' + Levels.OPS[g.op].symbol + ' ' + Levels.OPS[g.op].name + ' · ' + (g.individual ? 'Individual play' : g.teams.length + ' teams') + ' · ' + g.expected + ' players</p>' +
         '<div class="big-timer" data-t></div>' +
         '<p data-msg></p>' +
         '<div class="team-pills">' + g.teams.map(function (t) { return '<span class="pill" style="--team:' + t.hex + '">' + t.emoji + ' ' + esc(t.name) + '</span>'; }).join('') + '</div>' +
@@ -230,7 +243,17 @@
   }
 
   /* ---------- start ---------- */
-  try { var saved = JSON.parse(store.getItem(KEY)); if (saved) { T.token = saved.token; T.code = saved.code; if (saved.choice) T.choice = saved.choice; } } catch (e) { /* ignore */ }
+  try {
+    var saved = JSON.parse(store.getItem(KEY));
+    if (saved) {
+      T.token = saved.token; T.code = saved.code;
+      if (saved.choice) {
+        T.choice = { op: saved.choice.op || 'add', seconds: saved.choice.seconds || 120,
+                     teams: saved.choice.teams !== undefined ? saved.choice.teams : 4 }; // older saves had "per team" instead
+        if (C.TEAM_COUNTS.indexOf(T.choice.teams) < 0) T.choice.teams = 4;
+      }
+    }
+  } catch (e) { /* ignore */ }
   if (!T.token) return showLogin();
   // Re-validate the saved login and pick up current settings (e.g. after a page refresh).
   call('teacherInfo').then(function (r) { T.cutoffs = r.cutoffs; T.rules = r.rules; T.code = r.activeRoom || null; save(); showDashboard(); })
