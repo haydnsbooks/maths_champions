@@ -5,7 +5,7 @@
 const fs = require('fs');
 const path = require('path');
 const ROOT = path.join(__dirname, '..');
-const order = ['Config.js', 'Store.js', 'Fluency.js', 'Rooms.js', 'Code.js'];
+const order = ['Config.js', 'Store.js', 'Fluency.js', 'Trophies.js', 'Rooms.js', 'Code.js'];
 const header = '/**\n * TRIALS OF OLYMPUS — Apps Script server (all-in-one)\n' +
   ' * Paste this WHOLE file into Code.gs in Apps Script (replace everything), Save, then\n' +
   ' * Deploy > Manage deployments > Edit > Version: New version > Deploy.\n' +

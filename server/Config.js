@@ -13,7 +13,7 @@ var CONFIG = {
 
   // ---- Fluency rules ----
   RECENT_ATTEMPTS: 3,          // fluency = average of this many most recent attempts at a level
-  MIN_ATTEMPTS_FOR_FLUENCY: 3, // attempts needed at a level before it can count as fluent (<= RECENT_ATTEMPTS)
+  MIN_ATTEMPTS_FOR_FLUENCY: 1, // attempts needed at a level before it can count as fluent (<= RECENT_ATTEMPTS). 1 = one fast try is enough
   DUST_PER_WEEK: 0.5,          // seconds of "dust" added for each new week since the level was last played
   TZ_OFFSET_HOURS: 8,          // Perth (WA has no daylight saving). A new week starts Monday 00:00 local time.
   DEFAULT_CUTOFF: 3.0,         // seconds per correct answer; used until the teacher saves cut-offs
@@ -30,9 +30,26 @@ var CONFIG = {
   // If they have never played their current level, expected = cut-off + UNKNOWN_EXTRA.
   UNKNOWN_EXTRA: 1.5,
 
+  // ---- Trophy cabinet ----
+  // Every player on the winning team of a class round gets the same trophy (picked at random from this list).
+  // The shelves are emptied every Sunday at 00:00 Perth time; the student's favourite (top shelf) is kept.
+  // The emoji are shown gold on screen (a CSS filter in css/style.css), so any emoji works here.
+  TROPHIES: [
+    ['🏆', 'Golden Cup'], ['👑', 'Crown of Olympus'], ['🦉', 'Owl of Athena'], ['⚡', 'Thunderbolt of Zeus'],
+    ['🔱', 'Trident of Poseidon'], ['🏺', 'Golden Amphora'], ['🐎', 'Golden Pegasus'], ['🦁', 'Nemean Lion'],
+    ['🛡️', 'Shield of Achilles'], ['⚔️', 'Sword of Perseus'], ['🏛️', 'Golden Temple'], ['🌿', 'Laurel Wreath'],
+    ['🐉', 'Golden Hydra'], ['🦅', 'Eagle of Zeus'], ['🐂', 'Golden Bull'], ['🐑', 'Golden Fleece'],
+    ['🍎', 'Golden Apple'], ['☀️', 'Sun of Helios'], ['🔥', 'Flame of Olympus'], ['🏹', 'Bow of Artemis'],
+    ['🎭', 'Mask of Dionysus'], ['🐍', 'Serpent of Medusa'], ['⛵', 'Ship of the Argonauts'], ['🦚', 'Peacock of Hera'],
+    ['🥇', 'Olympic Gold'], ['🌟', 'Star of Olympus'], ['🐬', 'Dolphin of Apollo'], ['🗿', 'Head of the Titan']
+  ],
+  TROPHY_SHELF_MAX: 60,        // most trophies kept on the shelves in one week (oldest drop off first)
+
   // ---- Timing / traffic ----
   START_DELAY_MS: 8000,        // countdown before a class game starts. Must be longer than the student lobby poll (js/config.js)
   SUBMIT_GRACE_MS: 15000,      // after the game ends, wait this long for late results before finishing anyway
+  PRESENCE_TTL_SEC: 30,        // a student stops counting as "in the room" if their class-game screen hasn't checked in for this long
+                               // (screens check in every 3–4 s; must stay well above the slowest student poll in js/config.js)
   SESSION_TTL_SEC: 21600,      // login lasts 6 hours (CacheService maximum)
   ROOM_TTL_SEC: 21600,         // a room lasts 6 hours (CacheService maximum)
   LIST_CACHE_SEC: 300,         // Students/Settings sheets are re-read at most every 5 minutes

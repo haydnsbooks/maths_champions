@@ -21,7 +21,7 @@ var CONFIG = {
 
   // ---- Fluency rules ----
   RECENT_ATTEMPTS: 3,          // fluency = average of this many most recent attempts at a level
-  MIN_ATTEMPTS_FOR_FLUENCY: 3, // attempts needed at a level before it can count as fluent (<= RECENT_ATTEMPTS)
+  MIN_ATTEMPTS_FOR_FLUENCY: 1, // attempts needed at a level before it can count as fluent (<= RECENT_ATTEMPTS). 1 = one fast try is enough
   DUST_PER_WEEK: 0.5,          // seconds of "dust" added for each new week since the level was last played
   TZ_OFFSET_HOURS: 8,          // Perth (WA has no daylight saving). A new week starts Monday 00:00 local time.
   DEFAULT_CUTOFF: 3.0,         // seconds per correct answer; used until the teacher saves cut-offs
@@ -38,9 +38,26 @@ var CONFIG = {
   // If they have never played their current level, expected = cut-off + UNKNOWN_EXTRA.
   UNKNOWN_EXTRA: 1.5,
 
+  // ---- Trophy cabinet ----
+  // Every player on the winning team of a class round gets the same trophy (picked at random from this list).
+  // The shelves are emptied every Sunday at 00:00 Perth time; the student's favourite (top shelf) is kept.
+  // The emoji are shown gold on screen (a CSS filter in css/style.css), so any emoji works here.
+  TROPHIES: [
+    ['🏆', 'Golden Cup'], ['👑', 'Crown of Olympus'], ['🦉', 'Owl of Athena'], ['⚡', 'Thunderbolt of Zeus'],
+    ['🔱', 'Trident of Poseidon'], ['🏺', 'Golden Amphora'], ['🐎', 'Golden Pegasus'], ['🦁', 'Nemean Lion'],
+    ['🛡️', 'Shield of Achilles'], ['⚔️', 'Sword of Perseus'], ['🏛️', 'Golden Temple'], ['🌿', 'Laurel Wreath'],
+    ['🐉', 'Golden Hydra'], ['🦅', 'Eagle of Zeus'], ['🐂', 'Golden Bull'], ['🐑', 'Golden Fleece'],
+    ['🍎', 'Golden Apple'], ['☀️', 'Sun of Helios'], ['🔥', 'Flame of Olympus'], ['🏹', 'Bow of Artemis'],
+    ['🎭', 'Mask of Dionysus'], ['🐍', 'Serpent of Medusa'], ['⛵', 'Ship of the Argonauts'], ['🦚', 'Peacock of Hera'],
+    ['🥇', 'Olympic Gold'], ['🌟', 'Star of Olympus'], ['🐬', 'Dolphin of Apollo'], ['🗿', 'Head of the Titan']
+  ],
+  TROPHY_SHELF_MAX: 60,        // most trophies kept on the shelves in one week (oldest drop off first)
+
   // ---- Timing / traffic ----
   START_DELAY_MS: 8000,        // countdown before a class game starts. Must be longer than the student lobby poll (js/config.js)
   SUBMIT_GRACE_MS: 15000,      // after the game ends, wait this long for late results before finishing anyway
+  PRESENCE_TTL_SEC: 30,        // a student stops counting as "in the room" if their class-game screen hasn't checked in for this long
+                               // (screens check in every 3–4 s; must stay well above the slowest student poll in js/config.js)
   SESSION_TTL_SEC: 21600,      // login lasts 6 hours (CacheService maximum)
   ROOM_TTL_SEC: 21600,         // a room lasts 6 hours (CacheService maximum)
   LIST_CACHE_SEC: 300,         // Students/Settings sheets are re-read at most every 5 minutes
@@ -286,10 +303,12 @@ function onOpen() {
  *
  * Rules:
  *   attempt time   = seconds played / correct answers (wrong answers cost time, so they count against you)
- *   fluency time   = average of the last 3 attempts + dust
+ *   fluency time   = average of the last 3 attempts (or fewer, if fewer have been played) + dust
  *   dust           = 0.5 s for every new week (Monday) since the level was last played
- *   fluent         = at least MIN_ATTEMPTS_FOR_FLUENCY attempts AND fluency time <= cut-off
- *   current level  = the LOWEST level that is not fluent (so dusty levels pull a student back to revise them)
+ *   fluent         = at least MIN_ATTEMPTS_FOR_FLUENCY attempts (currently 1) AND fluency time <= cut-off
+ *   current level  = the LOWEST level that is not fluent, counting levels never tried as not fluent
+ *                    (e.g. L1 1.2 s, L2 1.1 s, nothing else tried, cut-off 3 s -> Level 3).
+ *                    Dusty levels still pull a student back to revise them.
  */
 
 function round2_(x) { return Math.round(x * 100) / 100; }
@@ -372,6 +391,82 @@ function validOpLevel_(op, level) {
 }
 
 
+// ===================== Trophies =====================
+/**
+ * TROPHY CABINET
+ * ---------------------------------------------------------------
+ * Each student's cabinet is stored inside their profile JSON (Profiles sheet), so no new sheet is needed:
+ *   profile.cab = { wk: 2912, fav: trophy | null, items: [trophy, ...newest first] }
+ *   trophy      = { id, e: '🦉', n: 'Owl of Athena', op: 'mul', team: 'Azure Krakens', t: 1729500000000 }
+ *
+ * Rules:
+ *  - Every player on the winning team of a class round (who sent in a result) gets the same trophy.
+ *  - The student taps a trophy to make it their favourite: it moves to the top shelf. The old favourite
+ *    goes back onto the shelves below.
+ *  - A new trophy week starts every Sunday 00:00 Perth time. The shelves are emptied then; the favourite stays.
+ *    Clearing happens whenever the cabinet is next read or changed, so no timed trigger is needed.
+ */
+
+/** Sunday-based week number in local time (day 0 = Thursday 1 Jan 1970, so day 3 is a Sunday). */
+function trophyWeek_(ms) {
+  var day = Math.floor((ms + CONFIG.TZ_OFFSET_HOURS * 3600000) / 86400000);
+  return Math.floor((day + 4) / 7);
+}
+/** Time (ms) the given trophy week ends, i.e. the next Sunday 00:00 local time. */
+function trophyWeekEnds_(wk) {
+  return ((wk + 1) * 7 - 4) * 86400000 - CONFIG.TZ_OFFSET_HOURS * 3600000;
+}
+
+/** The student's cabinet, emptied (favourite kept) if a new trophy week has started. Mutates the profile. */
+function cabinet_(profile, now) {
+  var wk = trophyWeek_(now);
+  var cab = profile.cab || { wk: wk, fav: null, items: [] };
+  if (!cab.items) cab.items = [];
+  if (cab.wk !== wk) { cab.items = []; cab.wk = wk; }
+  profile.cab = cab;
+  return cab;
+}
+
+/** A random trophy, avoiding `notEmoji` (e.g. the previous round's) when possible. */
+function pickTrophy_(notEmoji) {
+  var list = CONFIG.TROPHIES.filter(function (t) { return t[0] !== notEmoji; });
+  if (!list.length) list = CONFIG.TROPHIES;
+  var t = list[Math.floor(Math.random() * list.length)];
+  return { e: t[0], n: t[1] };
+}
+
+/** Adds a trophy to a profile's shelves (mutates it). Returns the stored trophy. */
+function awardTrophy_(profile, trophy, op, teamName, now) {
+  var cab = cabinet_(profile, now);
+  var item = { id: now.toString(36) + Math.random().toString(36).slice(2, 7), e: trophy.e, n: trophy.n, op: op, team: teamName, t: now };
+  cab.items.unshift(item);
+  if (cab.items.length > CONFIG.TROPHY_SHELF_MAX) cab.items.length = CONFIG.TROPHY_SHELF_MAX;
+  return item;
+}
+
+/** Moves the tapped trophy to the top shelf; the previous favourite goes back onto the shelves. */
+function setFavourite_(profile, id, now) {
+  var cab = cabinet_(profile, now);
+  if (cab.fav && cab.fav.id === id) return cab;
+  var idx = -1;
+  for (var i = 0; i < cab.items.length; i++) if (cab.items[i].id === id) { idx = i; break; }
+  if (idx < 0) throw new Error('That trophy isn\'t in your cabinet any more.');
+  var pick = cab.items.splice(idx, 1)[0];
+  if (cab.fav) {
+    cab.items.push(cab.fav);
+    cab.items.sort(function (a, b) { return b.t - a.t; });
+  }
+  cab.fav = pick;
+  return cab;
+}
+
+/** What the student app displays. */
+function cabinetView_(profile, now) {
+  var cab = cabinet_(profile, now);
+  return { fav: cab.fav, items: cab.items, clearsAt: trophyWeekEnds_(cab.wk) };
+}
+
+
 // ===================== Rooms =====================
 /**
  * ROOMS & TEAMS  (class multiplayer)
@@ -380,16 +475,21 @@ function validOpLevel_(op, level) {
  * (key "activeRoom"), so students just press Multiplayer — no code to type.
  *
  * Room shape:
- * { code, status: 'lobby'|'playing'|'results', round, created,
+ * { code, status: 'lobby'|'playing'|'results', round, created, lastTrophy,
  *   players: { id: {name, joined} },
- *   game:    { op, seconds, teamSize, startAt, endAt, teams: [{name, emoji, colour, hex, members:[id]}],
+ *   game:    { op, seconds, teamCount, individual, startAt, endAt, teams: [{name, emoji, colour, hex, members:[id]}],
  *              assign: { id: {team, level} } },
  *   subs:    { id: {c, w, s} },          // submitted results this round
  *   results: { teams:[...], personal:{ id:{...} } } }
  *
+ * Presence: while a student's class-game screen is open it checks in every few seconds (lobby, results,
+ * waiting screens). Each check-in refreshes a short-lived cache key "seen:CODE:id". Only students whose key
+ * still exists count as "in the room", so anyone who reloaded, closed the app, logged out, let the iPad
+ * sleep or went to Practice drops off the teacher's list by themselves and is NOT put into the next round.
+ *
  * Request pattern per class game (approx. 25 students):
- *   lobby polling (cache read only) -> 1 start -> 0 requests while playing -> 25 small submits
- *   -> 1 finish (the only sheet write) -> results polling (cache read only)
+ *   lobby polling (cache only) -> 1 start -> 0 requests while playing -> 25 small submits
+ *   -> 1 finish (the only sheet write) -> results polling (cache only)
  */
 
 function newCode_() {
@@ -410,18 +510,37 @@ function shuffle_(a) {
   return a;
 }
 
+/* ---------- Presence (who is actually on the class-game screen) ---------- */
+
+function seenKey_(code, id) { return 'seen:' + code + ':' + id; }
+/** Called on every request from a student's class-game screen. No lock needed (one small cache write). */
+function touch_(code, id) { if (code) cache_().put(seenKey_(code, id), '1', CONFIG.PRESENCE_TTL_SEC); }
+function forget_(code, id) { cache_().remove(seenKey_(code, id)); }
+/** ids of players whose class-game screen has checked in recently. */
+function presentIds_(room) {
+  var ids = Object.keys(room.players);
+  if (!ids.length) return [];
+  var got = cache_().getAll(ids.map(function (id) { return seenKey_(room.code, id); })) || {};
+  return ids.filter(function (id) { return !!got[seenKey_(room.code, id)]; });
+}
+/** Removes players who have stopped checking in. Call inside withLock_. If they come back, their screen re-joins by itself. */
+function pruneAbsent_(room) {
+  var here = {};
+  presentIds_(room).forEach(function (id) { here[id] = true; });
+  Object.keys(room.players).forEach(function (id) { if (!here[id]) delete room.players[id]; });
+}
+
 /* ---------- Team forming ---------- */
 
 /**
  * entries: [{id, rate}] where rate = expected correct answers per second (1 / expected time).
+ * numTeams: how many teams the teacher asked for (clamped to 1..number of students).
  * Returns arrays of ids. Team sizes differ by at most 1.
- * Method: snake draft (strongest first), then swap players between the strongest and weakest
- * team while it narrows the gap in average rate.
+ * Method: snake draft (strongest first), then swap players between teams while it narrows the gap in average rate.
  */
-function formTeams_(entries, teamSize) {
+function formTeams_(entries, numTeams) {
   var n = entries.length;
-  var numTeams = teamSize <= 1 ? n : Math.max(1, Math.round(n / teamSize));
-  numTeams = Math.min(numTeams, n);
+  numTeams = Math.max(1, Math.min(n, Math.floor(Number(numTeams) || 1)));
   var sorted = shuffle_(entries.slice()).sort(function (a, b) { return b.rate - a.rate; });
   var teams = [];
   for (var t = 0; t < numTeams; t++) teams.push([]);
@@ -429,7 +548,7 @@ function formTeams_(entries, teamSize) {
     var round = Math.floor(i / numTeams), pos = i % numTeams;
     teams[round % 2 === 0 ? pos : numTeams - 1 - pos].push(e);
   });
-  if (numTeams > 1 && teamSize > 1) improveTeams_(teams);
+  if (numTeams > 1 && numTeams < n) improveTeams_(teams);
   return teams.map(function (tm) { return tm.map(function (e) { return e.id; }); });
 }
 
@@ -493,9 +612,11 @@ function closeRoom_(code) {
   });
 }
 
+/** Only ever called when a student presses Class game (or their class-game screen re-joins). */
 function joinRoom_(student) {
   var code = activeCode_();
   if (!code) throw new Error('NO_ROOM');
+  touch_(code, student.id);
   return withLock_(function () {
     var room = getRoom_(code);
     if (!room.players[student.id]) {
@@ -509,6 +630,7 @@ function joinRoom_(student) {
 /** Removes a student from the room. If they leave mid-round without a result, they drop out of that round too,
  *  so the teacher's screen isn't left waiting for them. */
 function removePlayer_(code, id) {
+  forget_(code, id);
   return withLock_(function () {
     var room = getRoom_(code);
     delete room.players[id];
@@ -525,14 +647,26 @@ function leaveRoom_(code, id) {
   try { return removePlayer_(code, id); } catch (e) { return null; } // room already closed: nothing to do
 }
 
-function startGame_(code, op, teamSize, seconds) {
+/**
+ * teamCount: number of teams the teacher chose (0 or 1 = individual play).
+ * legacyTeamSize: only sent by an old cached teacher page ("x per team"); used if teamCount is missing.
+ */
+function startGame_(code, op, teamCount, seconds, legacyTeamSize) {
   if (!CONFIG.LEVEL_COUNTS[op]) throw new Error('Unknown operation');
   seconds = Math.max(15, Math.min(900, Number(seconds) || 60));
-  teamSize = Math.max(1, Math.floor(Number(teamSize) || 1));
   return withLock_(function () {
     var room = getRoom_(code);
+    pruneAbsent_(room); // only students whose class-game screen is open right now
     var ids = Object.keys(room.players);
-    if (!ids.length) throw new Error('No students have joined yet.');
+    if (!ids.length) { saveRoom_(room); throw new Error('No students are in the room right now.'); }
+    var n = ids.length, numTeams;
+    if (teamCount === undefined || teamCount === null || teamCount === '') {
+      var size = Math.max(1, Math.floor(Number(legacyTeamSize) || 1));
+      numTeams = size <= 1 ? n : Math.max(1, Math.round(n / size));
+    } else {
+      var tc = Math.floor(Number(teamCount) || 0);
+      numTeams = tc <= 1 ? n : Math.min(tc, n);
+    }
     var profiles = getProfiles_(ids), cutoff = cutoffs_()[op], now = Date.now();
     var entries = [], levelOf = {};
     ids.forEach(function (id) {
@@ -540,7 +674,7 @@ function startGame_(code, op, teamSize, seconds) {
       levelOf[id] = sum.current;
       entries.push({ id: id, rate: 1 / expectedTime_(sum) });
     });
-    var groups = formTeams_(entries, teamSize);
+    var groups = formTeams_(entries, numTeams);
     var labels = teamLabels_(groups.length);
     var assign = {};
     var teams = groups.map(function (members, t) {
@@ -549,7 +683,8 @@ function startGame_(code, op, teamSize, seconds) {
       return { name: l.name, emoji: l.emoji, colour: l.colour, hex: l.hex, members: members };
     });
     var startAt = now + CONFIG.START_DELAY_MS;
-    room.game = { op: op, seconds: seconds, teamSize: teamSize, startAt: startAt, endAt: startAt + seconds * 1000, teams: teams, assign: assign };
+    room.game = { op: op, seconds: seconds, teamCount: groups.length, individual: groups.length >= n,
+                  startAt: startAt, endAt: startAt + seconds * 1000, teams: teams, assign: assign };
     room.status = 'playing';
     room.round = (room.round || 0) + 1;
     room.subs = {};
@@ -562,6 +697,7 @@ function startGame_(code, op, teamSize, seconds) {
 function submitResult_(student, round, correct, wrong, seconds) {
   var code = activeCode_();
   if (!code) throw new Error('ROOM_CLOSED');
+  touch_(code, student.id);
   return withLock_(function () {
     var room = getRoom_(code);
     var g = room.game;
@@ -576,7 +712,7 @@ function submitResult_(student, round, correct, wrong, seconds) {
   });
 }
 
-/** Ranks teams, saves every result to the sheet (one write), updates profiles. Idempotent. */
+/** Ranks teams, saves every result to the sheet (one write), updates profiles, hands out trophies. Idempotent. */
 function finishGame_(code) {
   return withLock_(function () {
     var room = getRoom_(code);
@@ -592,7 +728,7 @@ function finishGame_(code) {
       var pts = sub.c * CONFIG.POINTS_CORRECT + sub.w * CONFIG.POINTS_WRONG;
       var t = attemptTime_(sub.s, sub.c);
       var saved = sub.s >= CONFIG.MIN_ATTEMPT_SECONDS;
-      var p = profiles[id] || {};
+      var p = profiles[id] = profiles[id] || {};
       var before = opSummary_(p, g.op, cutoff, now).current;
       if (saved) {
         recordAttempt_(p, g.op, a.level, t, now);
@@ -622,6 +758,20 @@ function finishGame_(code) {
     });
     teams.forEach(function (t, i) { t.rank = i + 1; });
 
+    // Trophy: every player on the winning team who sent in a result gets the same one.
+    var win = teams[0];
+    if (win && win.played > 0 && win.correct > 0) {
+      var trophy = pickTrophy_(room.lastTrophy);
+      win.trophy = trophy;
+      room.lastTrophy = trophy.e;
+      g.teams[win.index].members.forEach(function (id) {
+        if (!room.subs[id]) return;
+        awardTrophy_(profiles[id], trophy, g.op, win.name, now);
+        updates[id] = profiles[id];
+        personal[id].trophy = trophy;
+      });
+    }
+
     saveProfiles_(updates);
     appendAttempts_(rows);
     room.status = 'results';
@@ -641,6 +791,7 @@ function newRound_(code) {
   return withLock_(function () {
     var room = getRoom_(code);
     room.status = 'lobby'; room.game = null; room.subs = {}; room.results = null;
+    pruneAbsent_(room);
     saveRoom_(room);
     return room;
   });
@@ -648,15 +799,20 @@ function newRound_(code) {
 
 /* ---------- What each screen is allowed to see ---------- */
 
+/** In the lobby, only students whose class-game screen is open count. During a round nobody polls, so everyone counts. */
+function visiblePlayerIds_(room) {
+  return room.status === 'lobby' ? presentIds_(room) : Object.keys(room.players);
+}
+
 /** Students never receive other students' names. */
 function studentView_(room, id) {
   var g = room.game, a = g ? g.assign[id] : null;
-  var view = { code: room.code, status: room.status, round: room.round, playerCount: Object.keys(room.players).length,
+  var view = { code: room.code, status: room.status, round: room.round, playerCount: visiblePlayerIds_(room).length,
                joined: !!room.players[id], game: null, submitted: !!room.subs[id], results: null };
   if (g) {
     var tm = a ? g.teams[a.team] : null;
     view.game = { op: g.op, seconds: g.seconds, startAt: g.startAt, endAt: g.endAt, inGame: !!a, level: a ? a.level : null,
-                  individual: g.teamSize <= 1,
+                  individual: g.individual !== undefined ? g.individual : g.teamSize <= 1,
                   team: tm ? { name: tm.name, emoji: tm.emoji, hex: tm.hex, size: tm.members.length } : null };
   }
   if (room.results) {
@@ -666,14 +822,14 @@ function studentView_(room, id) {
 }
 
 function teacherView_(room) {
-  var players = Object.keys(room.players).map(function (id) { return { id: id, name: room.players[id].name }; })
+  var players = visiblePlayerIds_(room).map(function (id) { return { id: id, name: room.players[id].name }; })
     .sort(function (a, b) { return a.name.localeCompare(b.name); });
   var view = { code: room.code, status: room.status, round: room.round, players: players, game: null,
                submitted: Object.keys(room.subs).length, results: null };
   var nameOf = function (id) { return room.players[id] ? room.players[id].name : id; };
   if (room.game) {
     var g = room.game;
-    view.game = { op: g.op, seconds: g.seconds, teamSize: g.teamSize, startAt: g.startAt, endAt: g.endAt,
+    view.game = { op: g.op, seconds: g.seconds, teamCount: g.teamCount, individual: g.individual, startAt: g.startAt, endAt: g.endAt,
                   expected: Object.keys(g.assign).length,
                   teams: g.teams.map(function (tm) {
                     return { name: tm.name, emoji: tm.emoji, hex: tm.hex,
@@ -785,6 +941,24 @@ var ACTIONS = {
     return { profile: profileView_(getProfile_(s.id)), rules: rules_() };
   },
 
+  /** The student's trophy cabinet (shelves are emptied each Sunday; the favourite stays). */
+  cabinet: function (req) {
+    var s = authStudent_(req);
+    return { cabinet: cabinetView_(getProfile_(s.id), Date.now()) };
+  },
+
+  /** Puts the tapped trophy on the top shelf. */
+  setFavourite: function (req) {
+    var s = authStudent_(req);
+    return withLock_(function () {
+      var now = Date.now(), p = getProfile_(s.id);
+      setFavourite_(p, String(req.id || ''), now);
+      var upd = {}; upd[s.id] = p;
+      saveProfiles_(upd);
+      return { cabinet: cabinetView_(p, now) };
+    });
+  },
+
   practiceSubmit: function (req) {
     var s = authStudent_(req);
     var level = Number(req.level);
@@ -812,7 +986,10 @@ var ACTIONS = {
   roomState: function (req) {
     if (req.teacherToken) { authTeacher_(req); return { room: teacherView_(getRoom_(req.code)) }; }
     var s = authStudent_(req);
-    return { room: studentView_(getRoom_(activeCode_()), s.id) };
+    var code = activeCode_();
+    var room = getRoom_(code);
+    touch_(code, s.id); // this student's class-game screen is open
+    return { room: studentView_(room, s.id) };
   },
 
   leaveRoom: function (req) {
@@ -840,9 +1017,20 @@ var ACTIONS = {
   openRoom: function (req) { authTeacher_(req); return { room: teacherView_(openRoom_()) }; },
   closeRoom: function (req) { authTeacher_(req); closeRoom_(req.code); return {}; },
   removePlayer: function (req) { authTeacher_(req); return { room: teacherView_(removePlayer_(req.code, req.id)) }; },
-  startGame: function (req) { authTeacher_(req); return { room: teacherView_(startGame_(req.code, req.op, req.teamSize, req.seconds)) }; },
+  /** req.teams = number of teams (0 = individual play). req.teamSize is only sent by an old cached teacher page. */
+  startGame: function (req) { authTeacher_(req); return { room: teacherView_(startGame_(req.code, req.op, req.teams, req.seconds, req.teamSize)) }; },
   finishGame: function (req) { authTeacher_(req); return { room: teacherView_(finishGame_(req.code)) }; },
   newRound: function (req) { authTeacher_(req); return { room: teacherView_(newRound_(req.code)) }; },
+
+  /** Every student (active or not) and whether they have a password yet. Used by the teacher's Passwords page.
+   *  Reads the sheet directly, so it is up to date straight after a reset. */
+  studentPasswords: function (req) {
+    authTeacher_(req);
+    cache_().remove('students');
+    return { students: getStudents_().filter(function (s) { return s.active; })
+      .map(function (s) { return { id: s.id, name: s.name, hasPassword: !!s.password }; })
+      .sort(function (a, b) { return a.name.localeCompare(b.name); }) };
+  },
 
   /** Clears a student's password so they create a new one next time they log in. */
   resetPassword: function (req) {

@@ -10,6 +10,7 @@
   --gold: #d9a937; --gold-light: #f4d27a; --gold-deep: #9b7214;
   --ink: #1a2142; --muted: #59627f; --line: #dfe3ec;
   --laurel: #3f8a55; --laurel-soft: #e3f2e7; --wine: #b4323f; --wine-soft: #f8e3e5;
+  --wood-dark: #2b170a; --wood: #4a2a12; --wood-light: #6b3f1d;
   --display: 'Cinzel', 'Trajan Pro', Georgia, serif;
   --body: 'Nunito', system-ui, -apple-system, sans-serif;
   --r-panel: 6px; --r-control: 10px;
@@ -264,7 +265,7 @@ select:focus, input:focus { outline: none; border-color: var(--gold); }
 /* ---------- Teacher ---------- */
 .t-head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; color: #fff; margin-bottom: 18px; }
 .t-head h1 { margin: 0; color: var(--gold-light); }
-.t-head nav { display: flex; gap: 8px; }
+.t-head nav { display: flex; gap: 8px; flex-wrap: wrap; }
 .t-head .btn.ghost { color: #fff; }
 .lobby-grid { display: grid; grid-template-columns: 1.4fr 1fr; gap: 18px; align-items: start; }
 .lobby-grid .card { margin: 0; }
@@ -285,14 +286,11 @@ select:focus, input:focus { outline: none; border-color: var(--gold); }
 .row-between { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; }
 .overview td { min-width: 140px; }
 #app > .center:not(.card), #app > .center:not(.card) .muted { color: rgba(255, 255, 255, .9); }
+.done-note { background: var(--laurel-soft); color: var(--laurel); border: 1px solid rgba(63, 138, 85, .35); border-radius: var(--r-control); padding: 10px 14px; font-weight: 800; }
 
 @media (max-width: 520px) {
   .stat-grid { grid-template-columns: repeat(2, 1fr); }
   .rank-row { grid-template-columns: 34px 34px 1fr auto; padding: 8px; }
-}
-@media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { animation: none !important; transition: none !important; }
-  body.zap::after { animation: none; }
 }
 
 /* Link between the student and teacher login screens */
@@ -306,3 +304,111 @@ select:focus, input:focus { outline: none; border-color: var(--gold); }
 .show-pw input { width: 22px; height: 22px; margin: 0; }
 .pw-show { font-family: var(--body); font-weight: 800; font-size: 2rem; letter-spacing: .04em; margin: 0 0 10px; word-break: break-all; }
 .reset-pw { display: block; padding-left: 0; margin-top: 2px; color: var(--wine); }
+
+/* =====================================================================
+   TROPHIES — golden emoji, the win-screen award and the trophy cabinet
+   ===================================================================== */
+/* Any emoji is turned gold: sepia first (removes its own colours), then warmed and brightened. */
+.trophy {
+  display: inline-block; line-height: 1; font-style: normal;
+  filter: sepia(1) saturate(3.4) hue-rotate(-14deg) brightness(1.06) contrast(1.1)
+          drop-shadow(0 2px 0 rgba(110, 72, 0, .55)) drop-shadow(0 0 10px rgba(255, 214, 110, .45));
+}
+.trophy.sm { font-size: 1.7rem; vertical-align: middle; }
+.trophy.md { font-size: 2.7rem; }
+.trophy.xl { font-size: 5.6rem; }
+
+/* Winner panel: the round's prize (seen by everyone, teacher screen too) */
+.prize {
+  display: inline-flex; align-items: center; gap: 8px; margin-top: 10px; padding: 4px 16px 4px 8px; border-radius: 999px;
+  background: rgba(10, 14, 40, .35); border: 1px solid rgba(244, 210, 122, .6); font-weight: 800;
+}
+.prize b { color: var(--gold-light); }
+
+/* Win screen: "You won a trophy!" (only the winning team's iPads) */
+.trophy-won {
+  position: relative; overflow: hidden; display: flex; align-items: center; justify-content: center; gap: 18px; flex-wrap: wrap;
+  margin: 14px 0; padding: 18px 20px; border-radius: var(--r-panel); text-align: left;
+  background: radial-gradient(ellipse at 30% 50%, #3a2a62 0%, #1a1f4a 70%); color: #fff;
+  border: 3px solid var(--gold); box-shadow: inset 0 0 0 2px rgba(244, 210, 122, .35), 0 8px 24px rgba(4, 8, 30, .35);
+}
+.trophy-won-rays {
+  position: absolute; left: calc(50% - 300px); top: 50%; width: 600px; height: 600px; margin-top: -300px; pointer-events: none; opacity: .45;
+  background: repeating-conic-gradient(from 0deg, rgba(244, 210, 122, .7) 0 7deg, transparent 7deg 20deg);
+  -webkit-mask-image: radial-gradient(circle, #000 8%, transparent 45%); mask-image: radial-gradient(circle, #000 8%, transparent 45%);
+  animation: rays 18s linear infinite;
+}
+@keyframes rays { to { transform: rotate(360deg); } }
+.trophy-won .trophy { position: relative; animation: award 1s cubic-bezier(.2, 1.6, .4, 1) both; }
+@keyframes award { from { transform: scale(.2) rotate(-25deg); opacity: 0; } to { transform: scale(1) rotate(0); opacity: 1; } }
+.trophy-won-text { position: relative; }
+.trophy-won-kicker { font-family: var(--display); font-weight: 700; font-size: 1.1rem; color: var(--gold-light); }
+.trophy-won-name { font-family: var(--display); font-weight: 900; font-size: clamp(1.6rem, 5vw, 2.3rem); line-height: 1.1; }
+.trophy-won-note { font-weight: 700; opacity: .9; margin-top: 4px; }
+
+/* Trophy cabinet: a dark wood cabinet with gold-edged shelves */
+.cabinet-card { padding-bottom: 14px; }
+.cabinet {
+  margin: 8px auto 14px; padding: 14px 16px 2px; border-radius: 8px;
+  background:
+    radial-gradient(ellipse 70% 40% at 50% 0%, rgba(255, 220, 140, .18), transparent 70%),
+    repeating-linear-gradient(92deg, rgba(255, 255, 255, .025) 0 3px, transparent 3px 11px),
+    linear-gradient(180deg, var(--wood) 0%, var(--wood-dark) 100%);
+  border: 12px solid var(--wood-light); border-top-color: #7a4a22; border-bottom-color: #3a210d;
+  box-shadow: inset 0 0 40px rgba(0, 0, 0, .65), 0 0 0 3px var(--gold), 0 14px 30px rgba(4, 8, 30, .45);
+}
+.shelf {
+  position: relative; display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; align-items: end;
+  min-height: 112px; padding: 10px 6px 6px; margin-bottom: 26px;
+}
+/* the plank each shelf stands on */
+.shelf::after {
+  content: ''; position: absolute; left: -16px; right: -16px; bottom: -14px; height: 14px;
+  background: linear-gradient(180deg, var(--gold-light), var(--gold) 35%, var(--gold-deep));
+  box-shadow: 0 8px 10px -2px rgba(0, 0, 0, .6);
+}
+.top-shelf { display: block; text-align: center; min-height: 206px; padding-top: 42px;
+  background: radial-gradient(ellipse 40% 70% at 50% 100%, rgba(255, 226, 150, .28), transparent 70%); }
+.plaque {
+  position: absolute; top: 0; left: 50%; transform: translateX(-50%);
+  font-family: var(--display); font-weight: 700; font-size: .85rem; letter-spacing: .08em; white-space: nowrap;
+  background: linear-gradient(180deg, var(--gold-light), var(--gold)); color: #3a2604; padding: 3px 14px; border-radius: 3px;
+  box-shadow: 0 2px 0 var(--gold-deep);
+}
+.fav { color: #fff; }
+.fav .trophy.xl { font-size: 6.4rem; }
+.fav-name { font-family: var(--display); font-weight: 900; font-size: 1.5rem; color: var(--gold-light); margin-top: 4px; }
+.fav-from { font-size: .9rem; font-weight: 700; color: rgba(255, 255, 255, .75); }
+.fav.just-picked .trophy { animation: award .8s cubic-bezier(.2, 1.6, .4, 1) both; }
+.fav-empty { color: rgba(255, 255, 255, .75); font-weight: 800; padding-top: 52px; }
+.trophy-slot {
+  font: inherit; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 4px;
+  min-height: 92px; padding: 4px 2px; border: 0; border-radius: 8px; background: transparent; cursor: pointer; color: #fff;
+  transition: transform .15s;
+}
+.trophy-slot:active { transform: scale(.94); }
+.trophy-slot:hover, .trophy-slot:focus-visible { background: rgba(255, 226, 150, .1); }
+.trophy-slot.empty { cursor: default; }
+.trophy-slot.lifting .trophy { animation: lift .5s ease-in-out infinite alternate; }
+@keyframes lift { to { transform: translateY(-10px); } }
+.slot-name { font-size: .72rem; font-weight: 800; line-height: 1.15; text-align: center; color: rgba(255, 240, 210, .9);
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.cabinet-note { text-align: center; font-weight: 800; margin: 4px 0; }
+@media (max-width: 520px) {
+  .cabinet-card { padding: 16px 12px; }
+  .cabinet { padding: 12px 8px 2px; border-width: 8px; }
+  .shelf { gap: 2px; min-height: 92px; padding: 8px 0 4px; }
+  .shelf::after { left: -8px; right: -8px; }
+  .trophy.md { font-size: 2.1rem; }
+  .trophy-slot { min-height: 78px; }
+  .slot-name { font-size: .62rem; }
+  .trophy-won { text-align: center; }
+  .top-shelf { min-height: 180px; padding-top: 38px; }
+  .fav .trophy.xl { font-size: 4.6rem; }
+  .fav-name { font-size: 1.25rem; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+  body.zap::after { animation: none; }
+}

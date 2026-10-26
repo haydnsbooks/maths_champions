@@ -1,12 +1,16 @@
 /**
  * RESULTS & CELEBRATION — shared by the teacher screen and student screens.
  * Celebrate.results(el, {teams, myTeam, me, showMembers, rankBy, big})
+ * Celebrate.trophy(t, cls) -> HTML for one golden trophy emoji (also used by the trophy cabinet).
  */
 (function () {
   var esc = function (s) { return Game.esc(s); };
   var medal = ['🥇', '🥈', '🥉'];
 
   function fmtTime(t) { return t === null || t === undefined ? '—' : t.toFixed(2) + ' s'; }
+
+  /** A trophy emoji drawn in gold (the colour comes from the .trophy CSS filter). */
+  function trophy(t, cls) { return '<span class="trophy' + (cls ? ' ' + cls : '') + '" role="img" aria-label="' + esc(t.n) + '">' + esc(t.e) + '</span>'; }
 
   function results(el, o) {
     var teams = o.teams || [];
@@ -22,8 +26,18 @@
         '<h1>' + esc(w.name) + '</h1>' +
         (individual ? '' : '<div class="winner-sub">Team of ' + w.size + '</div>') +
         '<div class="winner-stat">' + fmtTime(w.avgTime) + ' per correct answer · ' + w.correct + ' correct</div>' +
+        (w.trophy ? '<div class="prize">' + trophy(w.trophy, 'sm') + '<span>Prize: <b>' + esc(w.trophy.n) + '</b></span></div>' : '') +
         (mine === w.index ? '<div class="you-badge">That\'s you! 🎉</div>' : '') +
       '</div>';
+
+    // Shown only on the iPads of the winning team's players.
+    var won = o.me && o.me.trophy ? '<div class="trophy-won">' +
+        '<div class="trophy-won-rays" aria-hidden="true"></div>' +
+        trophy(o.me.trophy, 'xl') +
+        '<div class="trophy-won-text"><div class="trophy-won-kicker">You won a trophy!</div>' +
+        '<div class="trophy-won-name">' + esc(o.me.trophy.n) + '</div>' +
+        '<div class="trophy-won-note">It\'s waiting in your 🏆 Trophy cabinet.</div></div>' +
+      '</div>' : '';
 
     var me = o.me ? '<div class="me-card">' +
         '<div><b>You:</b> ' + o.me.correct + ' correct · ' + o.me.wrong + ' wrong · ' + fmtTime(o.me.avgTime) + ' each · ' + o.me.points + ' pts</div>' +
@@ -47,7 +61,7 @@
       return '<span class="member">' + esc(m.name) + ' <small>L' + m.level + (m.avgTime !== null ? ' · ' + fmtTime(m.avgTime) : '') + (m.levelUp ? ' ⬆️' : '') + '</small></span>';
     }).join('') + '</div>' : '';
 
-    el.innerHTML = '<div class="results' + (o.big ? ' big' : '') + '">' + head + winnerMembers + me +
+    el.innerHTML = '<div class="results' + (o.big ? ' big' : '') + '">' + head + winnerMembers + won + me +
       (rows ? '<ol class="ranks">' + rows + '</ol>' : '') +
       '<p class="muted small center">Ranked by ' + (o.rankBy === 'points' ? 'total points' : 'average time per correct answer (lower is better)') + '</p></div>';
     if (!noOne && o.confetti !== false) confetti(o.big ? 6000 : 3500);
@@ -80,5 +94,5 @@
     })();
   }
 
-  window.Celebrate = { results: results, confetti: confetti, fmtTime: fmtTime };
+  window.Celebrate = { results: results, confetti: confetti, fmtTime: fmtTime, trophy: trophy };
 })();

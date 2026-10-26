@@ -9,10 +9,12 @@
  *
  * Rules:
  *   attempt time   = seconds played / correct answers (wrong answers cost time, so they count against you)
- *   fluency time   = average of the last 3 attempts + dust
+ *   fluency time   = average of the last 3 attempts (or fewer, if fewer have been played) + dust
  *   dust           = 0.5 s for every new week (Monday) since the level was last played
- *   fluent         = at least MIN_ATTEMPTS_FOR_FLUENCY attempts AND fluency time <= cut-off
- *   current level  = the LOWEST level that is not fluent (so dusty levels pull a student back to revise them)
+ *   fluent         = at least MIN_ATTEMPTS_FOR_FLUENCY attempts (currently 1) AND fluency time <= cut-off
+ *   current level  = the LOWEST level that is not fluent, counting levels never tried as not fluent
+ *                    (e.g. L1 1.2 s, L2 1.1 s, nothing else tried, cut-off 3 s -> Level 3).
+ *                    Dusty levels still pull a student back to revise them.
  */
 
 function round2_(x) { return Math.round(x * 100) / 100; }

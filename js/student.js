@@ -1,6 +1,6 @@
 /**
  * STUDENT APP (index.html)
- * Screens: login -> menu -> { practice | class game (multiplayer) | my levels }
+ * Screens: login -> menu -> { practice | class game (multiplayer) | my levels | trophy cabinet }
  * Each screen is one function that fills #app. Server calls go through API (js/api.js).
  */
 (function () {
@@ -133,12 +133,14 @@
           '<button class="btn huge primary" id="mp">⚔️ Class game</button>' +
           '<button class="btn huge" id="pr">🎯 Practice</button>' +
           '<button class="btn huge" id="lv">📜 My levels</button>' +
+          '<button class="btn huge" id="tc">🏆 Trophy cabinet</button>' +
         '</div>' +
         '<button class="btn ghost small" id="out">Log out</button>' +
       '</div>');
     on('#mp', 'click', showMultiplayer);
     on('#pr', 'click', function () { showPracticeOps(); });
     on('#lv', 'click', function () { showProfile(Levels.ORDER[0]); });
+    on('#tc', 'click', showCabinet);
     on('#out', 'click', function () { store.removeItem(KEY); S.session = null; showLogin(); });
   }
 
@@ -148,6 +150,56 @@
       return '<button class="btn op-btn" data-op="' + op + '"><span class="op-sym">' + Levels.OPS[op].symbol + '</span>' +
         '<span>' + opName(op) + '<small>' + (sum.mastered ? '🏆 Every level fluent' : 'Level ' + sum.current + ': ' + esc(Levels.title(op, sum.current))) + '</small></span></button>';
     }).join('');
+  }
+
+  /* ---------- trophy cabinet ---------- */
+  var SHELF_SLOTS = 5;   // trophies per shelf
+  var MIN_SHELVES = 2;   // empty shelves still show, so it looks like a cabinet from day one
+
+  function showCabinet() {
+    stopPolling();
+    loading('Polishing your trophies…');
+    API.call('cabinet', { token: S.session.token }).then(function (r) { drawCabinet(r.cabinet); }).catch(fail);
+  }
+
+  function drawCabinet(cab, justPicked) {
+    var T = Celebrate.trophy;
+    var items = cab.items || [];
+    var shelves = [];
+    for (var i = 0; i < Math.max(items.length, MIN_SHELVES * SHELF_SLOTS); i += SHELF_SLOTS) shelves.push(items.slice(i, i + SHELF_SLOTS));
+    var slot = function (t) {
+      return '<button class="trophy-slot" data-id="' + esc(t.id) + '" aria-label="' + esc(t.n) + '. Tap to make it your favourite">' +
+        T(t, 'md') + '<span class="slot-name">' + esc(t.n) + '</span></button>';
+    };
+    var top = cab.fav
+      ? '<div class="fav' + (justPicked ? ' just-picked' : '') + '">' + T(cab.fav, 'xl') +
+          '<div class="fav-name">' + esc(cab.fav.n) + '</div>' +
+          '<div class="fav-from">Won with the ' + esc(cab.fav.team) + ' · ' + esc(Levels.OPS[cab.fav.op] ? Levels.OPS[cab.fav.op].name : '') + '</div></div>'
+      : '<div class="fav-empty">' + (items.length ? 'Tap your favourite trophy to put it up here ⬆️' : 'Your favourite trophy will stand here') + '</div>';
+
+    render('<div class="card wide cabinet-card">' + backBtn('Menu') +
+      '<h2 class="center">🏆 My Trophy Cabinet</h2>' +
+      '<div class="cabinet">' +
+        '<div class="shelf top-shelf"><div class="plaque">★ Favourite ★</div>' + top + '</div>' +
+        shelves.map(function (row) {
+          var html = row.map(slot).join('');
+          for (var k = row.length; k < SHELF_SLOTS; k++) html += '<span class="trophy-slot empty" aria-hidden="true"></span>';
+          return '<div class="shelf">' + html + '</div>';
+        }).join('') +
+      '</div>' +
+      '<p class="cabinet-note">' + (items.length
+        ? 'This week: <b>' + items.length + '</b> troph' + (items.length === 1 ? 'y' : 'ies') + '. Tap one to make it your favourite.'
+        : 'Win a class game with your team to earn a trophy!') + '</p>' +
+      '<p class="muted small center">The shelves are cleared every Sunday. Your favourite stays on the top shelf.</p>' +
+    '</div>');
+    on('[data-back]', 'click', showMenu);
+    onAll('.trophy-slot[data-id]', 'click', function (b) {
+      if (app.querySelector('.trophy-slot.lifting')) return;
+      b.classList.add('lifting');
+      API.call('setFavourite', { token: S.session.token, id: b.getAttribute('data-id') })
+        .then(function (r) { drawCabinet(r.cabinet, true); })
+        .catch(function (e) { b.classList.remove('lifting'); fail(e); });
+    });
   }
 
   /* ---------- practice (always 1 minute) ---------- */

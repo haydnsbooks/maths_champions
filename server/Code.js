@@ -87,6 +87,24 @@ var ACTIONS = {
     return { profile: profileView_(getProfile_(s.id)), rules: rules_() };
   },
 
+  /** The student's trophy cabinet (shelves are emptied each Sunday; the favourite stays). */
+  cabinet: function (req) {
+    var s = authStudent_(req);
+    return { cabinet: cabinetView_(getProfile_(s.id), Date.now()) };
+  },
+
+  /** Puts the tapped trophy on the top shelf. */
+  setFavourite: function (req) {
+    var s = authStudent_(req);
+    return withLock_(function () {
+      var now = Date.now(), p = getProfile_(s.id);
+      setFavourite_(p, String(req.id || ''), now);
+      var upd = {}; upd[s.id] = p;
+      saveProfiles_(upd);
+      return { cabinet: cabinetView_(p, now) };
+    });
+  },
+
   practiceSubmit: function (req) {
     var s = authStudent_(req);
     var level = Number(req.level);
@@ -114,7 +132,10 @@ var ACTIONS = {
   roomState: function (req) {
     if (req.teacherToken) { authTeacher_(req); return { room: teacherView_(getRoom_(req.code)) }; }
     var s = authStudent_(req);
-    return { room: studentView_(getRoom_(activeCode_()), s.id) };
+    var code = activeCode_();
+    var room = getRoom_(code);
+    touch_(code, s.id); // this student's class-game screen is open
+    return { room: studentView_(room, s.id) };
   },
 
   leaveRoom: function (req) {
@@ -142,9 +163,20 @@ var ACTIONS = {
   openRoom: function (req) { authTeacher_(req); return { room: teacherView_(openRoom_()) }; },
   closeRoom: function (req) { authTeacher_(req); closeRoom_(req.code); return {}; },
   removePlayer: function (req) { authTeacher_(req); return { room: teacherView_(removePlayer_(req.code, req.id)) }; },
-  startGame: function (req) { authTeacher_(req); return { room: teacherView_(startGame_(req.code, req.op, req.teamSize, req.seconds)) }; },
+  /** req.teams = number of teams (0 = individual play). req.teamSize is only sent by an old cached teacher page. */
+  startGame: function (req) { authTeacher_(req); return { room: teacherView_(startGame_(req.code, req.op, req.teams, req.seconds, req.teamSize)) }; },
   finishGame: function (req) { authTeacher_(req); return { room: teacherView_(finishGame_(req.code)) }; },
   newRound: function (req) { authTeacher_(req); return { room: teacherView_(newRound_(req.code)) }; },
+
+  /** Every student (active or not) and whether they have a password yet. Used by the teacher's Passwords page.
+   *  Reads the sheet directly, so it is up to date straight after a reset. */
+  studentPasswords: function (req) {
+    authTeacher_(req);
+    cache_().remove('students');
+    return { students: getStudents_().filter(function (s) { return s.active; })
+      .map(function (s) { return { id: s.id, name: s.name, hasPassword: !!s.password }; })
+      .sort(function (a, b) { return a.name.localeCompare(b.name); }) };
+  },
 
   /** Clears a student's password so they create a new one next time they log in. */
   resetPassword: function (req) {

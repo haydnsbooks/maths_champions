@@ -1,7 +1,7 @@
 /**
  * TEACHER APP (teacher.html)
  * Login -> dashboard: open a room, choose operation / number of teams / time, start, see results.
- * Also: fluency cut-off settings and a class overview of everyone's levels.
+ * Also: fluency cut-off settings, a class overview of everyone's levels, and a Passwords page to reset a student's password.
  */
 (function () {
   var C = window.APP_CONFIG, esc = Game.esc, store = API.storage, KEY = 'fg_teacher';
@@ -43,10 +43,12 @@
     render('<div class="teacher-layout">' +
       '<header class="t-head"><h1>⚡ Trials of Olympus</h1><nav>' +
         '<button class="btn small" id="nav-overview">📊 Class levels</button>' +
+        '<button class="btn small" id="nav-passwords">🔑 Passwords</button>' +
         '<button class="btn small" id="nav-settings">⚙️ Cut-offs</button>' +
         '<button class="btn small ghost" id="nav-out">Log out</button></nav></header>' +
       '<main id="room"></main></div>');
     on('#nav-overview', 'click', showOverview);
+    on('#nav-passwords', 'click', function () { showPasswords(); });
     on('#nav-settings', 'click', showSettings);
     on('#nav-out', 'click', function () { stop(); store.removeItem(KEY); T.token = null; showLogin(); });
     if (!T.code) return drawNoRoom();
@@ -213,6 +215,43 @@
   }
   function backToGame() { if (T.code) refresh(); else drawNoRoom(); }
 
+  /* ---------- passwords ---------- */
+  /** Pick a student, press Reset: their password is cleared and they make a new one at their next log-in. */
+  function showPasswords(selectedId, doneMsg) {
+    stop();
+    roomEl().innerHTML = '<div class="card narrow"><div class="spinner"></div></div>';
+    call('studentPasswords').then(function (r) {
+      var list = r.students, byId = {};
+      list.forEach(function (s) { byId[s.id] = s; });
+      roomEl().innerHTML = '<div class="card narrow pw-card"><div class="row-between"><h2>🔑 Reset a password</h2><button class="btn ghost" id="back">← Back to game</button></div>' +
+        '<p>Choose a student and press <b>Reset password</b>. Next time they log in, they\'ll be asked to make a new password. Their levels and trophies are kept.</p>' +
+        (doneMsg ? '<p class="done-note" role="status">✅ ' + esc(doneMsg) + '</p>' : '') +
+        '<label>Student<select id="who"><option value="">Choose a student…</option>' + list.map(function (s) {
+          return '<option value="' + esc(s.id) + '"' + (s.id === selectedId ? ' selected' : '') + '>' + esc(s.name) + (s.hasPassword ? '' : ' (no password yet)') + '</option>';
+        }).join('') + '</select></label>' +
+        '<p class="muted small" id="pw-state"></p>' +
+        '<button class="btn big primary" id="reset" disabled>Reset password</button>' +
+        '<p class="muted small">To look a password up instead, open the Students sheet (column C).</p></div>';
+      var who = app.querySelector('#who'), btn = app.querySelector('#reset'), state = app.querySelector('#pw-state');
+      var update = function () {
+        var s = byId[who.value];
+        btn.disabled = !s || !s.hasPassword;
+        state.textContent = !s ? '' : s.hasPassword ? '' : s.name + ' doesn\'t have a password yet. They\'ll create one when they next log in.';
+      };
+      who.addEventListener('change', update);
+      update();
+      on('#back', 'click', backToGame);
+      on('#reset', 'click', function () {
+        var s = byId[who.value];
+        if (!s || !confirm('Reset ' + s.name + '\'s password?\n\nThey\'ll create a new one next time they log in. Their levels and trophies are kept.')) return;
+        btn.disabled = true; btn.textContent = 'Resetting…';
+        call('resetPassword', { id: s.id }).then(function () {
+          showPasswords('', s.name + '\'s password has been reset. They\'ll make a new one when they next log in.');
+        }).catch(function (e) { btn.disabled = false; btn.textContent = 'Reset password'; fail(e); });
+      });
+    }).catch(fail);
+  }
+
   /* ---------- class overview ---------- */
   function showOverview() {
     stop();
@@ -231,7 +270,7 @@
               '<small>' + (c.time !== null ? c.time.toFixed(2) + ' s' + (c.dust ? ' 🧹' : '') : 'not tried') + '</small>') + '</td>';
           }).join('') + '</tr>';
         }).join('') + '</tbody></table></div>' +
-        '<p class="muted small">Forgotten passwords: look in the Students sheet, or press Reset password so they create a new one next time they log in.</p></div>';
+        '<p class="muted small">Forgotten passwords: look in the Students sheet, or use 🔑 Passwords (or Reset password here) so they create a new one next time they log in.</p></div>';
       on('#back', 'click', backToGame);
       app.querySelectorAll('.reset-pw').forEach(function (b) {
         b.addEventListener('click', function () {

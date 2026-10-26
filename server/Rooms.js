@@ -5,16 +5,21 @@
  * (key "activeRoom"), so students just press Multiplayer — no code to type.
  *
  * Room shape:
- * { code, status: 'lobby'|'playing'|'results', round, created,
+ * { code, status: 'lobby'|'playing'|'results', round, created, lastTrophy,
  *   players: { id: {name, joined} },
- *   game:    { op, seconds, teamSize, startAt, endAt, teams: [{name, emoji, colour, hex, members:[id]}],
+ *   game:    { op, seconds, teamCount, individual, startAt, endAt, teams: [{name, emoji, colour, hex, members:[id]}],
  *              assign: { id: {team, level} } },
  *   subs:    { id: {c, w, s} },          // submitted results this round
  *   results: { teams:[...], personal:{ id:{...} } } }
  *
+ * Presence: while a student's class-game screen is open it checks in every few seconds (lobby, results,
+ * waiting screens). Each check-in refreshes a short-lived cache key "seen:CODE:id". Only students whose key
+ * still exists count as "in the room", so anyone who reloaded, closed the app, logged out, let the iPad
+ * sleep or went to Practice drops off the teacher's list by themselves and is NOT put into the next round.
+ *
  * Request pattern per class game (approx. 25 students):
- *   lobby polling (cache read only) -> 1 start -> 0 requests while playing -> 25 small submits
- *   -> 1 finish (the only sheet write) -> results polling (cache read only)
+ *   lobby polling (cache only) -> 1 start -> 0 requests while playing -> 25 small submits
+ *   -> 1 finish (the only sheet write) -> results polling (cache only)
  */
 
 function newCode_() {
@@ -35,18 +40,37 @@ function shuffle_(a) {
   return a;
 }
 
+/* ---------- Presence (who is actually on the class-game screen) ---------- */
+
+function seenKey_(code, id) { return 'seen:' + code + ':' + id; }
+/** Called on every request from a student's class-game screen. No lock needed (one small cache write). */
+function touch_(code, id) { if (code) cache_().put(seenKey_(code, id), '1', CONFIG.PRESENCE_TTL_SEC); }
+function forget_(code, id) { cache_().remove(seenKey_(code, id)); }
+/** ids of players whose class-game screen has checked in recently. */
+function presentIds_(room) {
+  var ids = Object.keys(room.players);
+  if (!ids.length) return [];
+  var got = cache_().getAll(ids.map(function (id) { return seenKey_(room.code, id); })) || {};
+  return ids.filter(function (id) { return !!got[seenKey_(room.code, id)]; });
+}
+/** Removes players who have stopped checking in. Call inside withLock_. If they come back, their screen re-joins by itself. */
+function pruneAbsent_(room) {
+  var here = {};
+  presentIds_(room).forEach(function (id) { here[id] = true; });
+  Object.keys(room.players).forEach(function (id) { if (!here[id]) delete room.players[id]; });
+}
+
 /* ---------- Team forming ---------- */
 
 /**
  * entries: [{id, rate}] where rate = expected correct answers per second (1 / expected time).
+ * numTeams: how many teams the teacher asked for (clamped to 1..number of students).
  * Returns arrays of ids. Team sizes differ by at most 1.
- * Method: snake draft (strongest first), then swap players between the strongest and weakest
- * team while it narrows the gap in average rate.
+ * Method: snake draft (strongest first), then swap players between teams while it narrows the gap in average rate.
  */
-function formTeams_(entries, teamSize) {
+function formTeams_(entries, numTeams) {
   var n = entries.length;
-  var numTeams = teamSize <= 1 ? n : Math.max(1, Math.round(n / teamSize));
-  numTeams = Math.min(numTeams, n);
+  numTeams = Math.max(1, Math.min(n, Math.floor(Number(numTeams) || 1)));
   var sorted = shuffle_(entries.slice()).sort(function (a, b) { return b.rate - a.rate; });
   var teams = [];
   for (var t = 0; t < numTeams; t++) teams.push([]);
@@ -54,7 +78,7 @@ function formTeams_(entries, teamSize) {
     var round = Math.floor(i / numTeams), pos = i % numTeams;
     teams[round % 2 === 0 ? pos : numTeams - 1 - pos].push(e);
   });
-  if (numTeams > 1 && teamSize > 1) improveTeams_(teams);
+  if (numTeams > 1 && numTeams < n) improveTeams_(teams);
   return teams.map(function (tm) { return tm.map(function (e) { return e.id; }); });
 }
 
@@ -118,9 +142,11 @@ function closeRoom_(code) {
   });
 }
 
+/** Only ever called when a student presses Class game (or their class-game screen re-joins). */
 function joinRoom_(student) {
   var code = activeCode_();
   if (!code) throw new Error('NO_ROOM');
+  touch_(code, student.id);
   return withLock_(function () {
     var room = getRoom_(code);
     if (!room.players[student.id]) {
@@ -134,6 +160,7 @@ function joinRoom_(student) {
 /** Removes a student from the room. If they leave mid-round without a result, they drop out of that round too,
  *  so the teacher's screen isn't left waiting for them. */
 function removePlayer_(code, id) {
+  forget_(code, id);
   return withLock_(function () {
     var room = getRoom_(code);
     delete room.players[id];
@@ -150,14 +177,26 @@ function leaveRoom_(code, id) {
   try { return removePlayer_(code, id); } catch (e) { return null; } // room already closed: nothing to do
 }
 
-function startGame_(code, op, teamSize, seconds) {
+/**
+ * teamCount: number of teams the teacher chose (0 or 1 = individual play).
+ * legacyTeamSize: only sent by an old cached teacher page ("x per team"); used if teamCount is missing.
+ */
+function startGame_(code, op, teamCount, seconds, legacyTeamSize) {
   if (!CONFIG.LEVEL_COUNTS[op]) throw new Error('Unknown operation');
   seconds = Math.max(15, Math.min(900, Number(seconds) || 60));
-  teamSize = Math.max(1, Math.floor(Number(teamSize) || 1));
   return withLock_(function () {
     var room = getRoom_(code);
+    pruneAbsent_(room); // only students whose class-game screen is open right now
     var ids = Object.keys(room.players);
-    if (!ids.length) throw new Error('No students have joined yet.');
+    if (!ids.length) { saveRoom_(room); throw new Error('No students are in the room right now.'); }
+    var n = ids.length, numTeams;
+    if (teamCount === undefined || teamCount === null || teamCount === '') {
+      var size = Math.max(1, Math.floor(Number(legacyTeamSize) || 1));
+      numTeams = size <= 1 ? n : Math.max(1, Math.round(n / size));
+    } else {
+      var tc = Math.floor(Number(teamCount) || 0);
+      numTeams = tc <= 1 ? n : Math.min(tc, n);
+    }
     var profiles = getProfiles_(ids), cutoff = cutoffs_()[op], now = Date.now();
     var entries = [], levelOf = {};
     ids.forEach(function (id) {
@@ -165,7 +204,7 @@ function startGame_(code, op, teamSize, seconds) {
       levelOf[id] = sum.current;
       entries.push({ id: id, rate: 1 / expectedTime_(sum) });
     });
-    var groups = formTeams_(entries, teamSize);
+    var groups = formTeams_(entries, numTeams);
     var labels = teamLabels_(groups.length);
     var assign = {};
     var teams = groups.map(function (members, t) {
@@ -174,7 +213,8 @@ function startGame_(code, op, teamSize, seconds) {
       return { name: l.name, emoji: l.emoji, colour: l.colour, hex: l.hex, members: members };
     });
     var startAt = now + CONFIG.START_DELAY_MS;
-    room.game = { op: op, seconds: seconds, teamSize: teamSize, startAt: startAt, endAt: startAt + seconds * 1000, teams: teams, assign: assign };
+    room.game = { op: op, seconds: seconds, teamCount: groups.length, individual: groups.length >= n,
+                  startAt: startAt, endAt: startAt + seconds * 1000, teams: teams, assign: assign };
     room.status = 'playing';
     room.round = (room.round || 0) + 1;
     room.subs = {};
@@ -187,6 +227,7 @@ function startGame_(code, op, teamSize, seconds) {
 function submitResult_(student, round, correct, wrong, seconds) {
   var code = activeCode_();
   if (!code) throw new Error('ROOM_CLOSED');
+  touch_(code, student.id);
   return withLock_(function () {
     var room = getRoom_(code);
     var g = room.game;
@@ -201,7 +242,7 @@ function submitResult_(student, round, correct, wrong, seconds) {
   });
 }
 
-/** Ranks teams, saves every result to the sheet (one write), updates profiles. Idempotent. */
+/** Ranks teams, saves every result to the sheet (one write), updates profiles, hands out trophies. Idempotent. */
 function finishGame_(code) {
   return withLock_(function () {
     var room = getRoom_(code);
@@ -217,7 +258,7 @@ function finishGame_(code) {
       var pts = sub.c * CONFIG.POINTS_CORRECT + sub.w * CONFIG.POINTS_WRONG;
       var t = attemptTime_(sub.s, sub.c);
       var saved = sub.s >= CONFIG.MIN_ATTEMPT_SECONDS;
-      var p = profiles[id] || {};
+      var p = profiles[id] = profiles[id] || {};
       var before = opSummary_(p, g.op, cutoff, now).current;
       if (saved) {
         recordAttempt_(p, g.op, a.level, t, now);
@@ -247,6 +288,20 @@ function finishGame_(code) {
     });
     teams.forEach(function (t, i) { t.rank = i + 1; });
 
+    // Trophy: every player on the winning team who sent in a result gets the same one.
+    var win = teams[0];
+    if (win && win.played > 0 && win.correct > 0) {
+      var trophy = pickTrophy_(room.lastTrophy);
+      win.trophy = trophy;
+      room.lastTrophy = trophy.e;
+      g.teams[win.index].members.forEach(function (id) {
+        if (!room.subs[id]) return;
+        awardTrophy_(profiles[id], trophy, g.op, win.name, now);
+        updates[id] = profiles[id];
+        personal[id].trophy = trophy;
+      });
+    }
+
     saveProfiles_(updates);
     appendAttempts_(rows);
     room.status = 'results';
@@ -266,6 +321,7 @@ function newRound_(code) {
   return withLock_(function () {
     var room = getRoom_(code);
     room.status = 'lobby'; room.game = null; room.subs = {}; room.results = null;
+    pruneAbsent_(room);
     saveRoom_(room);
     return room;
   });
@@ -273,15 +329,20 @@ function newRound_(code) {
 
 /* ---------- What each screen is allowed to see ---------- */
 
+/** In the lobby, only students whose class-game screen is open count. During a round nobody polls, so everyone counts. */
+function visiblePlayerIds_(room) {
+  return room.status === 'lobby' ? presentIds_(room) : Object.keys(room.players);
+}
+
 /** Students never receive other students' names. */
 function studentView_(room, id) {
   var g = room.game, a = g ? g.assign[id] : null;
-  var view = { code: room.code, status: room.status, round: room.round, playerCount: Object.keys(room.players).length,
+  var view = { code: room.code, status: room.status, round: room.round, playerCount: visiblePlayerIds_(room).length,
                joined: !!room.players[id], game: null, submitted: !!room.subs[id], results: null };
   if (g) {
     var tm = a ? g.teams[a.team] : null;
     view.game = { op: g.op, seconds: g.seconds, startAt: g.startAt, endAt: g.endAt, inGame: !!a, level: a ? a.level : null,
-                  individual: g.teamSize <= 1,
+                  individual: g.individual !== undefined ? g.individual : g.teamSize <= 1,
                   team: tm ? { name: tm.name, emoji: tm.emoji, hex: tm.hex, size: tm.members.length } : null };
   }
   if (room.results) {
@@ -291,14 +352,14 @@ function studentView_(room, id) {
 }
 
 function teacherView_(room) {
-  var players = Object.keys(room.players).map(function (id) { return { id: id, name: room.players[id].name }; })
+  var players = visiblePlayerIds_(room).map(function (id) { return { id: id, name: room.players[id].name }; })
     .sort(function (a, b) { return a.name.localeCompare(b.name); });
   var view = { code: room.code, status: room.status, round: room.round, players: players, game: null,
                submitted: Object.keys(room.subs).length, results: null };
   var nameOf = function (id) { return room.players[id] ? room.players[id].name : id; };
   if (room.game) {
     var g = room.game;
-    view.game = { op: g.op, seconds: g.seconds, teamSize: g.teamSize, startAt: g.startAt, endAt: g.endAt,
+    view.game = { op: g.op, seconds: g.seconds, teamCount: g.teamCount, individual: g.individual, startAt: g.startAt, endAt: g.endAt,
                   expected: Object.keys(g.assign).length,
                   teams: g.teams.map(function (tm) {
                     return { name: tm.name, emoji: tm.emoji, hex: tm.hex,

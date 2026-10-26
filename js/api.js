@@ -19,7 +19,7 @@
   function ensureReady() {
     if (!DEMO) return Promise.resolve();
     if (!ready) {
-      ready = ['js/demo/mock-gas.js', 'server/Config.js', 'server/Store.js', 'server/Fluency.js', 'server/Rooms.js', 'server/Code.js']
+      ready = ['js/demo/mock-gas.js', 'server/Config.js', 'server/Store.js', 'server/Fluency.js', 'server/Trophies.js', 'server/Rooms.js', 'server/Code.js']
         .reduce(function (p, src) { return p.then(function () { return loadScript(src); }); }, Promise.resolve())
         .then(function () { window.MockGas.seedDemo(); });
     }

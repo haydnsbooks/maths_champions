@@ -25,17 +25,45 @@
 - One shared link: student login screen has a "Teacher login" link (and back).
 - Students create their own password on first log-in (password column blank in the Students sheet). `setPassword` only works while blank. Teacher can reset from Class levels (`resetPassword`). Passwords stay plain text in the sheet so the teacher can look them up.
 
+## v4 changes (23 Oct 2026, Haydn's requests)
+- **Flip button on the number pad** (`js/game.js`, styles in `css/pad.css`, linked from `index.html`). ⇅ Flip sits to the right of the pad and swaps 7-8-9-on-top ↔ 1-2-3-on-top; the bottom row ⌫ 0 ✓ never moves. Whatever has been typed stays. The choice is saved per iPad (localStorage key `fg_pad_flipped`) and used for every later game, practice and class.
+- **Level placement:** current level = lowest level whose fluency time is NOT at/under the cut-off, counting never-tried levels as not fluent. Haydn's example: L1 1.2 s, L2 1.1 s, nothing else tried → Level 3. Done by setting `MIN_ATTEMPTS_FOR_FLUENCY` to 1 (was 3), so one fast try now counts. Fluency time is still the average of the last 3 tries (or fewer if fewer played) + dust, and dust still pulls students back.
+- Practice results screen no longer says "x of 3 tries done".
+- Not yet confirmed with Haydn: a time exactly equal to the cut-off still counts as fluent (`<=`).
+
+## v5 changes (23 Oct 2026, Haydn's requests)
+- **Lobby only shows students who are actually on the Class game screen.** Cause found in the code: the room kept every student who had ever pressed Class game until they tapped "Leave the room". Reloading, closing the app, logging out or the iPad sleeping never told the server, so those students stayed listed and were put into the next round's teams (even while they were in Practice).
+  - Fix: presence check-ins. Every request from a student's class-game screen (join, lobby/results polls, submit) refreshes a cache key `seen:CODE:id` lasting `PRESENCE_TTL_SEC` (30 s, `server/Config.js`). The teacher's lobby list, the student "x players in the room" count and team forming only include students whose key still exists. `startGame_` and `newRound_` remove anyone who has gone quiet. If they come back to the class-game screen, it re-joins by itself.
+  - During a round nobody polls, so presence is not checked while status is `playing`.
+  - Student app: a fresh page load (e.g. reload) calls `leaveRoom` straight away, since a loaded page always opens on the menu.
+  - Start is refused with "No students are in the room right now." if nobody is on the class-game screen.
+- **Teacher picks the number of teams** (Individual, 2–8 teams; `TEAM_COUNTS` in `js/config.js`) instead of players per team. A line under the choice shows e.g. "25 students → 6 teams of 4–5". Sizes still differ by at most 1; asking for more teams than students gives one per team. The server still accepts the old `teamSize` field in case a cached teacher page sends it.
+- `game.teamSize` replaced by `game.teamCount` + `game.individual`.
+
+## v6 changes (26 Oct 2026, Haydn's requests)
+- **Trophy cabinet** (new file `server/Trophies.js`; screen in `js/student.js` → `showCabinet`; styles at the bottom of `css/style.css`).
+  - Every player on the winning (rank 1) team of a class round gets the same trophy, chosen at random from `CONFIG.TROPHIES` (28 Greek-myth `[emoji, name]` pairs), never the same emoji as the previous round in that room (`room.lastTrophy`). Only players who sent in a result get it; a team with 0 correct gets none. Practice gives no trophies.
+  - Stored inside each student's profile JSON as `profile.cab = { wk, fav, items[] }`, so a class round still writes the sheet once. Trophy = `{ id, e, n, op, team, t }`.
+  - Win screen: the winner panel shows "Prize: <trophy>" on every screen (teacher too); the winning team's iPads also get a big "You won a trophy!" panel (`Celebrate.results`, `o.me.trophy`).
+  - Cabinet: menu button **🏆 Trophy cabinet**. Big top shelf = favourite; shelves of 5 below, newest first, at least 2 shelves always drawn. Tap a trophy → `setFavourite` → it moves to the top shelf and the old favourite goes back on the shelves (sorted by date).
+  - Weekly clear: trophy week = Sunday 00:00 Perth (`trophyWeek_`, separate from the Monday dust week). Clearing is lazy: whenever the cabinet is read or changed and the week number differs, the shelves are emptied and the favourite kept. No time trigger needed.
+  - Shelves capped at `TROPHY_SHELF_MAX` (60) per week, oldest dropped.
+  - Gold: any emoji is tinted gold by the `.trophy` CSS filter (sepia + saturate + hue-rotate + glow).
+- **Teacher Passwords page** (`🔑 Passwords` in the teacher header, `showPasswords` in `js/teacher.js`): pick a student from a drop-down → Reset password → confirm. New teacher-only action `studentPasswords` (names + hasPassword, never the passwords; reads the sheet fresh so the list is right straight after a reset). Students without a password are marked "(no password yet)" and the button stays disabled for them. The old per-row button on Class levels still works.
+- README: rules table updated (fluent = 1 attempt; trophies), demo instructions corrected (config.js holds the real URL; demo students create their own passwords).
+
 ## Assumptions to confirm with Haydn
 - Winner = lowest team average time per correct answer (as specified). Points are shown but only used as a tie-break. Switch with `RANK_BY`.
 - Wrong answer penalty −5, correct +10 (values not specified).
-- A level needs 3 attempts before it can be fluent (literal reading of "three most recent attempts"). `MIN_ATTEMPTS_FOR_FLUENCY`.
 - Current level = lowest non-fluent level, so dust on an earlier level pulls the student back to it.
 - Practice results count towards the profile.
 - Default cut-off 3 s for every operation until changed.
 - Single-digit numbers use 1–9 (not 0) in Addition L1–2 and Subtraction L1.
+- Team-count choices go up to 8 (`TEAM_COUNTS`); presence timeout 30 s.
+- Trophies (v6): a winning-team member whose result never arrived (e.g. flat iPad) gets no trophy; the favourite stays on the top shelf week after week until the student picks a different one; the shelves clear at the very start of Sunday (00:00), so trophies won on a Sunday sit on the shelves until the following Sunday.
 
 ## Ideas not built yet
-- Placement test for new students (otherwise everyone starts at Level 1 and needs 3 attempts per level to move up).
+- Placement test for new students (otherwise everyone starts at Level 1 and must play each level once to move up).
 - Per-level cut-offs (e.g. 5D+5D addition needs more time than 2D+2D).
 - Teacher "student detail" view with per-level history from the Attempts sheet.
 - Multiple simultaneous classes (would need room codes).
