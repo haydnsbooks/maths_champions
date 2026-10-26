@@ -412,3 +412,18 @@ select:focus, input:focus { outline: none; border-color: var(--gold); }
   *, *::before, *::after { animation: none !important; transition: none !important; }
   body.zap::after { animation: none; }
 }
+
+/* =====================================================================
+   v7 — Play again panel, team balance note, "no result" rows
+   ===================================================================== */
+.again-card h2 { margin-bottom: .2em; }
+.again-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0 14px; }
+.again-grid label { margin: 10px 0; }
+.again-card .btn.huge { margin-top: 6px; }
+@media (max-width: 700px) { .again-grid { grid-template-columns: 1fr; } }
+.pill small { font-weight: 800; color: var(--muted); margin-left: 4px; font-variant-numeric: tabular-nums; }
+.balance-note { max-width: 620px; margin: 0 auto 14px; }
+.rank-row.unranked { background: var(--marble-shade); box-shadow: none; }
+.rank-row.unranked .rank, .rank-row.unranked .team-stat { color: var(--muted); }
+.winner.no-result { background: radial-gradient(ellipse at 50% 0%, rgba(255, 255, 255, .18), transparent 65%), var(--ink); }
+.winner.no-result h1 { font-size: clamp(1.8rem, 5vw, 2.6rem); }

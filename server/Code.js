@@ -165,6 +165,8 @@ var ACTIONS = {
   removePlayer: function (req) { authTeacher_(req); return { room: teacherView_(removePlayer_(req.code, req.id)) }; },
   /** req.teams = number of teams (0 = individual play). req.teamSize is only sent by an old cached teacher page. */
   startGame: function (req) { authTeacher_(req); return { room: teacherView_(startGame_(req.code, req.op, req.teams, req.seconds, req.teamSize)) }; },
+  /** From the results screen: next round straight away. req.teams = 'same' or a number of teams (0 = individual). */
+  playAgain: function (req) { authTeacher_(req); return { room: teacherView_(playAgain_(req.code, req.op, req.seconds, req.teams)) }; },
   finishGame: function (req) { authTeacher_(req); return { room: teacherView_(finishGame_(req.code)) }; },
   newRound: function (req) { authTeacher_(req); return { room: teacherView_(newRound_(req.code)) }; },
 

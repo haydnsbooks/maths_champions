@@ -1,18 +1,18 @@
 /**
  * TEACHER APP (teacher.html)
- * Login -> dashboard: open a room, choose operation / number of teams / time, start, see results.
+ * Login -> dashboard: open a room, choose operation / number of teams / time, start, see results, play again.
  * Also: fluency cut-off settings, a class overview of everyone's levels, and a Passwords page to reset a student's password.
  */
 (function () {
   var C = window.APP_CONFIG, esc = Game.esc, store = API.storage, KEY = 'fg_teacher';
   var app = document.getElementById('app');
   var T = { token: null, code: null, cutoffs: null, rules: null, timer: null, room: null, showMembers: false, finishing: false,
-            choice: { op: 'add', teams: 4, seconds: 120 }, shownResultsRound: null };
+            choice: { op: 'add', teams: 4, seconds: 120 }, againTeams: 'same', shownResultsRound: null };
 
   function render(html) { app.innerHTML = html; }
   function on(sel, ev, fn) { var n = app.querySelector(sel); if (n) n.addEventListener(ev, fn); }
   function toast(msg) { var t = document.createElement('div'); t.className = 'toast'; t.textContent = msg; document.body.appendChild(t); setTimeout(function () { t.remove(); }, 3500); }
-  function save() { store.setItem(KEY, JSON.stringify({ token: T.token, code: T.code, choice: T.choice })); }
+  function save() { store.setItem(KEY, JSON.stringify({ token: T.token, code: T.code, choice: T.choice, againTeams: T.againTeams })); }
   function stop() { clearTimeout(T.timer); T.timer = null; }
   function fail(e) {
     if (e && e.code === 'SESSION_EXPIRED') { store.removeItem(KEY); T.token = null; toast('Please log in again.'); return showLogin(); }
@@ -84,6 +84,8 @@
   function select(id, options, value) {
     return '<select id="' + id + '">' + options.map(function (o) { return '<option value="' + o[0] + '"' + (String(o[0]) === String(value) ? ' selected' : '') + '>' + esc(o[1]) + '</option>'; }).join('') + '</select>';
   }
+  function opOptions() { return Levels.ORDER.map(function (o) { return [o, Levels.OPS[o].symbol + '  ' + Levels.OPS[o].name]; }); }
+  function timeOptions() { return C.GAME_SECONDS.map(function (s) { return [s, s < 60 ? s + ' seconds' : (s / 60) + ' minute' + (s === 60 ? '' : 's')]; }); }
 
   /** e.g. "25 students → 6 teams of 4–5". Matches how the server splits players (sizes differ by at most 1). */
   function teamHint(players, teams) {
@@ -105,11 +107,11 @@
             '<p class="muted">Students log in and press <b>⚔️ Class game</b>. Only students on that screen right now are listed. Click a name to remove it.</p>' +
             '<div class="chips">' + (room.players.length ? room.players.map(function (p) { return '<button class="chip" data-id="' + esc(p.id) + '">' + esc(p.name) + ' ✕</button>'; }).join('') : '<span class="muted">Nobody yet…</span>') + '</div></section>' +
           '<section class="card"><h2>Game settings</h2>' +
-            '<label>Operation' + select('op', Levels.ORDER.map(function (o) { return [o, Levels.OPS[o].symbol + '  ' + Levels.OPS[o].name]; }), ch.op) + '</label>' +
+            '<label>Operation' + select('op', opOptions(), ch.op) + '</label>' +
             '<label>Teams' + select('teams', C.TEAM_COUNTS.map(function (n) { return [n, n <= 1 ? 'Individual play' : n + ' teams']; }), ch.teams) + '</label>' +
             '<p class="muted small" id="team-hint"></p>' +
-            '<label>Time' + select('secs', C.GAME_SECONDS.map(function (s) { return [s, s < 60 ? s + ' seconds' : (s / 60) + ' minute' + (s === 60 ? '' : 's')]; }), ch.seconds) + '</label>' +
-            '<p class="muted small">Each student gets questions at their own level for this operation. Teams are balanced using everyone\'s recent times.</p>' +
+            '<label>Time' + select('secs', timeOptions(), ch.seconds) + '</label>' +
+            '<p class="muted small">Each student gets questions at their own level for this operation. Teams are balanced so each team\'s average time per correct answer (from everyone\'s own level) is as even as possible.</p>' +
             '<button class="btn huge primary" id="start"' + (room.players.length ? '' : ' disabled') + '>▶ Start round ' + (room.round + 1) + '</button>' +
             '<button class="btn ghost small" id="close">Close room</button>' +
           '</section></div>';
@@ -142,16 +144,30 @@
     call('closeRoom').then(function () { T.code = null; save(); drawNoRoom(); }).catch(fail);
   }
 
+  /** Under the team names: how even the teams were made, so the teacher can see the balancing worked. */
+  function balanceNote(g) {
+    if (g.individual || g.balanceSd === null || g.balanceSd === undefined) return '';
+    var est = 0;
+    g.teams.forEach(function (t) { (t.members || []).forEach(function (m) { if (m.est) est++; }); });
+    return '<p class="muted small balance-note">Each team\'s expected average time per correct answer, from every player\'s own level for this operation. ' +
+      'Spread between teams (standard deviation): <b>' + g.balanceSd.toFixed(3) + ' s</b>.' +
+      (est ? '<br>' + est + ' player' + (est === 1 ? ' hasn\'t' : 's haven\'t') + ' played their level yet, so ' + (est === 1 ? 'that time is' : 'those times are') + ' an estimate (cut-off + 1.5 s).' : '') + '</p>';
+  }
+
   function drawPlaying(room) {
     var g = room.game;
     var now = API.now();
     var phase = now < g.startAt ? 'countdown' : now < g.endAt ? 'running' : 'collecting';
     roomEl().innerHTML =
       '<div class="card center playing-card">' +
-        '<p class="muted">' + Levels.OPS[g.op].symbol + ' ' + Levels.OPS[g.op].name + ' · ' + (g.individual ? 'Individual play' : g.teams.length + ' teams') + ' · ' + g.expected + ' players</p>' +
+        '<p class="muted">Round ' + room.round + ' · ' + Levels.OPS[g.op].symbol + ' ' + Levels.OPS[g.op].name + ' · ' + (g.individual ? 'Individual play' : g.teams.length + ' teams') + ' · ' + g.expected + ' players</p>' +
         '<div class="big-timer" data-t></div>' +
         '<p data-msg></p>' +
-        '<div class="team-pills">' + g.teams.map(function (t) { return '<span class="pill" style="--team:' + t.hex + '">' + t.emoji + ' ' + esc(t.name) + '</span>'; }).join('') + '</div>' +
+        '<div class="team-pills">' + g.teams.map(function (t) {
+          return '<span class="pill" style="--team:' + t.hex + '">' + t.emoji + ' ' + esc(t.name) +
+            (!g.individual && t.exp !== null && t.exp !== undefined ? ' <small>' + t.exp.toFixed(2) + ' s</small>' : '') + '</span>';
+        }).join('') + '</div>' +
+        balanceNote(g) +
         '<button class="btn" id="finish"' + (phase === 'collecting' ? '' : ' hidden') + '>Show results now</button>' +
       '</div>';
     on('#finish', 'click', finish);
@@ -182,19 +198,55 @@
     call('finishGame').then(function (r) { T.finishing = false; drawRoom(r.room); }).catch(function (e) { T.finishing = false; fail(e); schedule(3000); });
   }
 
+  /** What the Teams choice on the Play again panel will do. */
+  function againHint(value, g) {
+    if (value === 'same') {
+      return (g.individual ? 'Everyone plays solo again, with the same code names.' : 'The same teams play again.') +
+        ' Anyone who has left drops out; anyone new joins ' + (g.individual ? 'with their own code name' : 'the smallest team') + '.';
+    }
+    if (Number(value) <= 1) return 'Everyone plays solo.';
+    return 'New teams, balanced so each team\'s average time per correct answer (from everyone\'s own level for this operation) is as even as possible.';
+  }
+
   function drawResults(room) {
     stop();
+    var g = room.game || {};
+    var sameLabel = g.individual ? 'Same as last round (individual play)' : 'Same teams (' + (g.teamCount || g.teams.length) + ' teams)';
+    var teamOptions = [['same', sameLabel]].concat(C.TEAM_COUNTS.map(function (n) { return [n, n <= 1 ? 'New: individual play' : 'New: ' + n + ' teams']; }));
+    var teamsValue = T.againTeams === 'same' || C.TEAM_COUNTS.indexOf(Number(T.againTeams)) >= 0 ? T.againTeams : 'same';
     roomEl().innerHTML = '<div class="card wide" id="res"></div>' +
+      '<section class="card wide again-card">' +
+        '<h2>⚡ Play again</h2>' +
+        '<p class="muted small">Everyone still on the class-game screen plays the next round. Students don\'t need to do anything: their iPads go straight to the countdown.</p>' +
+        '<div class="again-grid">' +
+          '<label>Operation' + select('a-op', opOptions(), g.op || T.choice.op) + '</label>' +
+          '<label>Time' + select('a-secs', timeOptions(), g.seconds || T.choice.seconds) + '</label>' +
+          '<label>Teams' + select('a-teams', teamOptions, teamsValue) + '</label>' +
+        '</div>' +
+        '<p class="muted small" id="a-hint"></p>' +
+        '<button class="btn huge primary" id="again">▶ Play round ' + (room.round + 1) + '</button>' +
+      '</section>' +
       '<div class="center result-actions">' +
         '<label class="toggle"><input type="checkbox" id="mem"' + (T.showMembers ? ' checked' : '') + '> Show team members</label>' +
-        '<button class="btn big primary" id="again">▶ Another round</button><button class="btn ghost" id="close">Close room</button></div>';
+        '<button class="btn ghost" id="lobby">Back to lobby</button><button class="btn ghost" id="close">Close room</button></div>';
     var draw = function (party) {
       Celebrate.results(app.querySelector('#res'), { teams: room.results.teams, showMembers: T.showMembers, rankBy: T.rules.rankBy, big: true, confetti: party });
     };
     draw(T.shownResultsRound !== room.round);
     T.shownResultsRound = room.round;
+    var hint = function () { app.querySelector('#a-hint').textContent = againHint(app.querySelector('#a-teams').value, g); };
+    hint();
+    on('#a-teams', 'change', function () { T.againTeams = app.querySelector('#a-teams').value; save(); hint(); });
     on('#mem', 'change', function (e) { T.showMembers = e.target.checked; draw(false); });
-    on('#again', 'click', function () { call('newRound').then(function (r) { drawRoom(r.room); }).catch(fail); });
+    on('#again', 'click', function () {
+      var b = app.querySelector('#again'); b.disabled = true; b.textContent = 'Forming teams…';
+      var choice = { op: app.querySelector('#a-op').value, seconds: Number(app.querySelector('#a-secs').value), teams: app.querySelector('#a-teams').value };
+      T.choice.op = choice.op; T.choice.seconds = choice.seconds; T.againTeams = choice.teams; save();
+      call('playAgain', choice).then(function (r) { drawRoom(r.room); }).catch(function (e) {
+        b.disabled = false; b.textContent = '▶ Play round ' + (room.round + 1); fail(e);
+      });
+    });
+    on('#lobby', 'click', function () { call('newRound').then(function (r) { drawRoom(r.room); }).catch(fail); });
     on('#close', 'click', closeRoom);
   }
 
@@ -291,6 +343,7 @@
                      teams: saved.choice.teams !== undefined ? saved.choice.teams : 4 }; // older saves had "per team" instead
         if (C.TEAM_COUNTS.indexOf(T.choice.teams) < 0) T.choice.teams = 4;
       }
+      if (saved.againTeams !== undefined) T.againTeams = saved.againTeams;
     }
   } catch (e) { /* ignore */ }
   if (!T.token) return showLogin();

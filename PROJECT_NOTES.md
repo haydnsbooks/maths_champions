@@ -1,5 +1,10 @@
 # Project notes (for Haydn + Claude when editing later)
 
+## ⚠️ How to hand over every update (Haydn's standing instruction, 26 Oct 2026)
+1. **Always give Haydn one zip of ALL the game's files** (the whole `fluency-game/` folder, not just the changed ones), as a download link, so he can upload everything to GitHub in one go.
+2. **Whenever server code changes, give ALL the Apps Script code in ONE file** (`apps-script/Code.gs`, rebuilt with `node tools/build-apps-script.js`), so he can select all → delete in Apps Script → paste the new code. Never ask him to edit or add individual server functions by hand.
+3. Then say in a line or two what to do: paste Code.gs + deploy a new version (if the server changed), and replace the files on GitHub.
+
 ## Decisions made in v1 (Oct 2026)
 - Stack: GitHub Pages (front end) + Google Apps Script web app bound to a Google Sheet (back end). Polling, not websockets.
 - One active room at a time (single class). Students press "Class game"; no room code.
@@ -52,6 +57,23 @@
 - **Teacher Passwords page** (`🔑 Passwords` in the teacher header, `showPasswords` in `js/teacher.js`): pick a student from a drop-down → Reset password → confirm. New teacher-only action `studentPasswords` (names + hasPassword, never the passwords; reads the sheet fresh so the list is right straight after a reset). Students without a password are marked "(no password yet)" and the button stays disabled for them. The old per-row button on Class levels still works.
 - README: rules table updated (fluent = 1 attempt; trophies), demo instructions corrected (config.js holds the real URL; demo students create their own passwords).
 
+## v7 changes (26 Oct 2026, Haydn's requests)
+- **Play again from the results screen** (`playAgain_` in `server/Rooms.js`, action `playAgain`, panel in `drawResults` in `js/teacher.js`).
+  - Drop-downs: Operation, Time, Teams. Teams = "Same teams (N teams)" / "Same as last round (individual play)", or "New: individual play / 2–8 teams".
+  - Starts the next round straight away with everyone still on the class-game screen (presence check, same as Start). Students don't re-enter anything: their results screen keeps polling and goes straight into the countdown (no change needed in `js/student.js`). `PLAY_AGAIN_DELAY_MS` = 10 s (results-screen polls are every 4–5 s, so it's a little longer than the 8 s lobby start).
+  - Same teams: same names/colours and members. Anyone who left drops out (an emptied team disappears); anyone new joins one of the smallest teams, whichever keeps team averages most even (individual rounds: newcomers get their own code name). If nobody from last round is left, new teams of the same kind are made. Levels are always worked out fresh for the chosen operation.
+  - Pressing Play again twice doesn't start two rounds. From the lobby it is refused (Start is used there). "Back to lobby" keeps the old behaviour.
+  - The Teams choice is remembered on the teacher's computer (`againTeams` in localStorage). Operation and time default to last round's.
+- **Team balancing rewritten** (`formTeams_`, `improveTeams_`, `placeNewcomers_` in `server/Rooms.js`; `expectedTime_` in `server/Fluency.js`).
+  - Each player's expected time = their average seconds-per-correct at THEIR OWN current level for the chosen operation (students on different levels mix freely). Team value = average of its players. Goal = lowest standard deviation of the team values.
+  - Was: balanced on 1/time ("rate"), one snake draft + swaps. Now: balances the times themselves (Haydn's definition), tries `BALANCE_RESTARTS` (40) starting line-ups, and allows moving a player from a bigger to a smaller team as well as swaps. Sizes still differ by at most 1.
+  - Dust is NOT included in the balancing time by default (`BALANCE_ADD_DUST: false`), because it isn't how fast they actually are. Never played their level → cut-off + 1.5 s (unchanged rule; flagged as an estimate).
+  - Checked: never less even than the old method (100/100 random classes); in the rare uneven cases (worst seen 0.19 s, about 1 class in 10,000 over 0.1 s; also 0.17 s for 20 students in 8 teams of 2–3) an independent search (simulated annealing) found exactly the same spread, so these are limits of the numbers.
+  - Teacher's playing screen shows each team's expected average and the spread (standard deviation), plus how many players' times are estimates. Room stores `assign[id].exp/est`, `team.exp`, `game.balanceSd`.
+- **No result → no trophy, no places.** A team with no correct answers gets `rank: null`, is listed last as "No result" with "–" instead of a medal. If no team has a result: "No results this round", no trophy, no confetti. Personal `avgTime` is null when 0 correct (was seconds ÷ 1).
+- **Near-ties.** Ranking now compares the unrounded time (`team.avgRaw`). Before, two teams that both rounded to e.g. 4.61 s were split on points even if one was really faster. Screens show a 3rd/4th… decimal place for any teams whose times would otherwise look the same (up to 6; `Celebrate.decimals`). Exactly equal time AND points → shared place; if that's 1st, every tied team gets the trophy ("A tie on Olympus!"). Exactly equal time but different points → placed on points, with a "same time · placed on points" note.
+- Tests: 110 checks (`node tests/run-tests.js`), including Play again (same/new/individual), no-result rounds, 2-decimal ties, exact ties and balancing quality. Also run end to end in a browser (demo mode, 12 simulated students, 3 rounds).
+
 ## Assumptions to confirm with Haydn
 - Winner = lowest team average time per correct answer (as specified). Points are shown but only used as a tie-break. Switch with `RANK_BY`.
 - Wrong answer penalty −5, correct +10 (values not specified).
@@ -61,6 +83,7 @@
 - Single-digit numbers use 1–9 (not 0) in Addition L1–2 and Subtraction L1.
 - Team-count choices go up to 8 (`TEAM_COUNTS`); presence timeout 30 s.
 - Trophies (v6): a winning-team member whose result never arrived (e.g. flat iPad) gets no trophy; the favourite stays on the top shelf week after week until the student picks a different one; the shelves clear at the very start of Sunday (00:00), so trophies won on a Sunday sit on the shelves until the following Sunday.
+- v7: balancing ignores dust (`BALANCE_ADD_DUST`); "Same teams" keeps sizes as they are after people leave (e.g. 4, 4, 2), only newcomers are evened out; a full tie (same time and points) shares 1st place and every tied team gets the trophy.
 
 ## Ideas not built yet
 - Placement test for new students (otherwise everyone starts at Level 1 and must play each level once to move up).
@@ -68,3 +91,4 @@
 - Teacher "student detail" view with per-level history from the Attempts sheet.
 - Multiple simultaneous classes (would need room codes).
 - If live in-game leaderboards are ever wanted, Firebase Realtime Database would suit better than Apps Script polling.
+- Better estimate for a level a student has never played (currently cut-off + 1.5 s), e.g. a short placement round.

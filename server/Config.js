@@ -26,9 +26,12 @@ var CONFIG = {
   RANK_BY: 'avgTime',          // 'avgTime' = lowest average seconds per correct answer wins; 'points' = most points wins
 
   // ---- Team balancing ----
-  // A student's expected seconds-per-correct at their current level is used to balance teams.
-  // If they have never played their current level, expected = cut-off + UNKNOWN_EXTRA.
+  // Each student's expected seconds-per-correct = their average time at THEIR current level for the chosen operation.
+  // Teams are formed so the teams' average expected times are as close as possible (lowest standard deviation).
+  // If a student has never played their current level, expected = cut-off + UNKNOWN_EXTRA.
   UNKNOWN_EXTRA: 1.5,
+  BALANCE_ADD_DUST: false,     // false = balance on the real average of recent attempts; true = average + dust (the "fluency time")
+  BALANCE_RESTARTS: 40,        // how many different starting line-ups the balancer tries (more = more even, slightly slower)
 
   // ---- Trophy cabinet ----
   // Every player on the winning team of a class round gets the same trophy (picked at random from this list).
@@ -47,6 +50,8 @@ var CONFIG = {
 
   // ---- Timing / traffic ----
   START_DELAY_MS: 8000,        // countdown before a class game starts. Must be longer than the student lobby poll (js/config.js)
+  PLAY_AGAIN_DELAY_MS: 10000,  // countdown when the teacher presses Play again on the results screen
+                               // (students on the results screen check every 4–5 s, so this is a little longer)
   SUBMIT_GRACE_MS: 15000,      // after the game ends, wait this long for late results before finishing anyway
   PRESENCE_TTL_SEC: 30,        // a student stops counting as "in the room" if their class-game screen hasn't checked in for this long
                                // (screens check in every 3–4 s; must stay well above the slowest student poll in js/config.js)

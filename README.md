@@ -36,27 +36,30 @@ A class multiplayer maths fluency game. Every student answers questions at **the
 ## 2. How a class game runs
 1. Teacher page → **Open room**. Students log in → **⚔️ Class game** (no code to type; there is one room at a time).
 2. Teacher picks operation, number of teams (or individual) and time → **Start**.
-3. Server reads everyone's profile, finds each student's current level for that operation, and forms balanced teams. Each iPad shows its team name + emoji only (teammates stay secret) and an 8-second countdown.
+3. Server reads everyone's profile, finds each student's current level and average time at that level for that operation, and forms teams whose average times are as even as possible. Each iPad shows its team name + emoji only (teammates stay secret) and an 8-second countdown. The teacher screen shows each team's expected average time and how evenly they're matched.
 4. Students play. **No server traffic during play** — questions are generated on the iPad.
 5. When time is up, each iPad sends one small result. The teacher screen finishes the round (when all results are in, or after 15 s), which ranks teams, writes every attempt to the sheet in **one write**, updates profiles and hands out the winning team's trophy.
-6. Grand celebration on every screen, including the round's prize trophy. Winning players also see **"You won a trophy!"**. Teacher can tick **Show team members**, then **Another round** (students stay in the room) or **Close room**.
+6. Grand celebration on every screen, including the round's prize trophy. Winning players also see **"You won a trophy!"**. Teacher can tick **Show team members**.
+7. **Play again:** on the results screen, choose the next **operation**, **time** and **teams** (same teams, or new teams / individual) → **▶ Play round N**. Everyone still on the class-game screen goes straight into a 10-second countdown; students don't need to do anything. (**Back to lobby** and **Close room** are underneath.)
 
 ## 3. The rules (as built)
 | Rule | Implementation | Where to change |
 |---|---|---|
 | Points | +10 correct, −5 wrong (shown during play) | `server/Config.js` `POINTS_*` |
-| Winner | Lowest **team average time per correct answer** = total seconds played ÷ total correct (wrong answers cost time, so they count against you) | `RANK_BY` (`'avgTime'` or `'points'`) |
+| Winner | Lowest **team average time per correct answer** = total seconds played ÷ total correct (wrong answers cost time, so they count against you). Compared unrounded; if two teams would show the same time, extra decimal places are shown. Equal time → more points wins; equal time and points → shared place | `RANK_BY` (`'avgTime'` or `'points'`) |
+| No result | A team with no correct answers gets no place. If nobody has a result, there are no places and no trophy | `finishGame_` in `server/Rooms.js` |
 | Attempt time | seconds played ÷ correct answers | `server/Fluency.js` |
 | Fluency time | average of the **3 most recent attempts** at that level + dust | `RECENT_ATTEMPTS` |
 | Fluent | ≥ 1 attempt **and** fluency time ≤ cut-off | `MIN_ATTEMPTS_FOR_FLUENCY`, cut-offs on teacher page |
 | Dust | +0.5 s for every new week (Monday 00:00 Perth time) since that level was last played; playing the level clears it | `DUST_PER_WEEK`, `TZ_OFFSET_HOURS` |
 | Current level | **lowest** level that is not fluent — so a dusty earlier level pulls a student back to revise it | `opSummary_` in `server/Fluency.js` |
-| Team balancing | expected speed = fluency time at current level (or cut-off + 1.5 s if never played); snake draft then best swaps; sizes differ by at most 1 | `formTeams_` in `server/Rooms.js` |
+| Team balancing | each student's expected time = their average at **their own** current level for the chosen operation (cut-off + 1.5 s if never played; dust not added). Teams are formed so the teams' average times have the **lowest possible standard deviation** (40 starting line-ups, then best swaps/moves). Sizes differ by at most 1 | `formTeams_` in `server/Rooms.js`, `BALANCE_*` in `server/Config.js` |
+| Play again | same teams (leavers drop out, newcomers join the smallest team) or new balanced teams; levels are worked out for the new operation | `playAgain_` in `server/Rooms.js` |
 | Short games | games under 20 s (e.g. joined very late) aren't saved to profiles | `MIN_ATTEMPT_SECONDS` |
 | Practice | student picks operation → level; always 1 minute; saved to their profile (leaving early saves nothing) | `PRACTICE_SECONDS` in `js/config.js` |
 | Question order | small levels (e.g. a times table) are a shuffled deck: every fact once before any repeat, never the same fact twice in a row, wrong answers come back later in the deck. Huge levels are random with no repeats in a game | `Levels.deck` in `js/levels.js` |
 | Leaving | ✕ Leave on every game and countdown screen. Leaving a class round mid-game removes the student from that round so the teacher isn't kept waiting | `leaveRoom` in `server/Code.js` |
-| Trophies | every player on the winning team of a class round who sent in a result gets the same trophy (random from a Greek-myth list, never the same as the previous round's). Practice gives no trophies | `TROPHIES` in `server/Config.js` |
+| Trophies | every player on the winning team of a class round who sent in a result gets the same trophy (random from a Greek-myth list, never the same as the previous round's). Teams tied for 1st all get it. Practice gives no trophies | `TROPHIES` in `server/Config.js` |
 | Trophy cabinet | **🏆 Trophy cabinet** on the student menu. Tap a trophy → it goes on the big top shelf as the favourite (the old favourite goes back on a shelf). Every **Sunday 00:00 Perth time** the shelves are emptied; the favourite stays. Up to 60 trophies a week | `server/Trophies.js`, `TROPHY_SHELF_MAX` |
 | Gold trophies | any emoji is drawn gold by a CSS filter, so the list can use any emoji | `.trophy` in `css/style.css` |
 
@@ -71,24 +74,24 @@ A class multiplayer maths fluency game. Every student answers questions at **the
 ```
 index.html            Student app page (loads the js files below)
 teacher.html          Teacher app page
-css/style.css         All styling: Mount Olympus theme (colours + fonts at the top), trophy cabinet at the bottom
+css/style.css         All styling: Mount Olympus theme (colours + fonts at the top), trophy cabinet, Play again panel at the bottom
 css/pad.css           Number pad + Flip button
 js/config.js          API URL, polling speeds, time/team choices        ← browser settings
 js/levels.js          Level list, themed names + emoji, question decks  ← add/edit/rename levels here
 js/api.js             The only code that talks to the server (+ demo mode)
 js/game.js            Timed question screen + number pad + countdown
-js/celebrate.js       Results/podium, "You won a trophy!", confetti (shared)
+js/celebrate.js       Results/podium, places, extra decimals for near-ties, "You won a trophy!", confetti (shared)
 js/student.js         Student screens: login, menu, practice, my levels, trophy cabinet, class game
-js/teacher.js         Teacher screens: room, start, results, cut-offs, class levels, passwords
+js/teacher.js         Teacher screens: room, start, results + Play again, cut-offs, class levels, passwords
 js/demo/mock-gas.js   Fake Google services for demo + tests (NOT for Apps Script)
 apps-script/Code.gs   ALL server code in one file — this is what you paste into Apps Script (built from server/)
-server/Config.js      Server rules: points, fluency, dust, timing, team names, trophy list ← server settings
+server/Config.js      Server rules: points, fluency, dust, balancing, timing, team names, trophy list ← server settings
 server/Code.js        API router: list of actions
 server/Store.js       All Sheet/Cache reads & writes, setup()
 server/Fluency.js     Levels, dust, fluency, profiles
 server/Trophies.js    Trophy cabinet: awarding, favourite, Sunday clear-out
-server/Rooms.js       Rooms, team forming, results ranking, trophy for the winning team
-tests/run-tests.js    `node tests/run-tests.js` — checks 2,000 questions per level against the spec + a full simulated class game + trophies
+server/Rooms.js       Rooms, team balancing, Play again, results ranking, trophy for the winning team
+tests/run-tests.js    `node tests/run-tests.js` — checks 2,000 questions per level against the spec + simulated class games, Play again, placings + trophies
 ```
 **Adding a level:** add it in `js/levels.js`, update `LEVEL_COUNTS` in `server/Config.js` (and the spec arrays in `tests/run-tests.js`), run the tests, redeploy. Add new levels at the **end** of a list — profiles store levels by number, so inserting in the middle shifts students' history.
 

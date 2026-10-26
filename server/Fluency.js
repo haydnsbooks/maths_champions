@@ -86,10 +86,15 @@ function recordAttempt_(profile, op, level, time, now) {
   profile[op][level] = e;
 }
 
-/** Expected seconds-per-correct at the student's current level (used to balance teams). */
+/**
+ * Expected seconds-per-correct at the student's current level for this operation (used to balance teams).
+ * = average of their recent attempts at that level (+ dust only if CONFIG.BALANCE_ADD_DUST).
+ * Never played that level: cut-off + UNKNOWN_EXTRA (an estimate, not a measurement).
+ */
 function expectedTime_(summary) {
   var st = summary.levels[summary.current - 1];
-  return st.time !== null ? st.time : summary.cutoff + CONFIG.UNKNOWN_EXTRA;
+  if (st.avg === null) return round2_(summary.cutoff + CONFIG.UNKNOWN_EXTRA);
+  return CONFIG.BALANCE_ADD_DUST ? st.time : st.avg;
 }
 
 function validOpLevel_(op, level) {
