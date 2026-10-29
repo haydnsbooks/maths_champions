@@ -427,3 +427,67 @@ select:focus, input:focus { outline: none; border-color: var(--gold); }
 .rank-row.unranked .rank, .rank-row.unranked .team-stat { color: var(--muted); }
 .winner.no-result { background: radial-gradient(ellipse at 50% 0%, rgba(255, 255, 255, .18), transparent 65%), var(--ink); }
 .winner.no-result h1 { font-size: clamp(1.8rem, 5vw, 2.6rem); }
+.version-warn { max-width: 920px; border-top-color: var(--wine); box-shadow: inset 0 3px 0 var(--wine-soft), 0 14px 34px rgba(4, 8, 30, .45); }
+.version-warn ol { margin: 8px 0 0; padding-left: 22px; }
+.version-warn li { margin: 4px 0; }
+
+/* =====================================================================
+   v9 — penalty on the play screen, platinum trophies, keep / re-roll, weekly keep in the cabinet
+   ===================================================================== */
+.hud-item.penalised .hud-val { color: #ffb4a8; }
+
+/* Platinum: any emoji turned silver-white with a cool shimmer (gold comes from the .trophy filter above) */
+.trophy.plat {
+  filter: grayscale(1) brightness(1.45) contrast(1.2)
+          drop-shadow(0 2px 0 rgba(60, 70, 95, .6)) drop-shadow(0 0 12px rgba(205, 230, 255, .95));
+}
+.trophy.shine { animation: shine 1.4s ease-out both; }
+@keyframes shine { 0% { transform: scale(.6) rotate(-20deg); } 50% { transform: scale(1.25) rotate(8deg); } 100% { transform: scale(1) rotate(0); } }
+.trophy.vanish { animation: vanish 1s ease-in forwards; }
+@keyframes vanish { to { transform: scale(.2) translateY(-30px) rotate(25deg); opacity: 0; filter: blur(6px); } }
+.trophy-won.plat { background: radial-gradient(ellipse at 30% 50%, #5d6b8a 0%, #1f2742 70%); border-color: #dfe8f5; }
+.trophy-won.plat .trophy-won-kicker, .trophy-won.plat .trophy-won-name { color: #eef4ff; }
+.trophy-won.lost { filter: saturate(.4); }
+
+/* Keep / re-roll choice */
+.decide { position: relative; flex-basis: 100%; text-align: center; margin-top: 4px; }
+.decide-btns { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+.decide .btn { min-width: 210px; font-size: 1.1rem; }
+.btn.reroll { background: linear-gradient(180deg, #eef2fa, #c9d3e6); color: var(--ink); box-shadow: 0 4px 0 #8c97ad; }
+.decide-odds { font-size: .9rem; font-weight: 700; margin-top: 8px; opacity: .9; }
+.rolling { margin-top: 10px; font-family: var(--display); font-weight: 700; font-size: 1.3rem; }
+.dice { display: inline-block; font-size: 2rem; animation: roll .35s linear infinite; }
+@keyframes roll { to { transform: rotate(360deg); } }
+.outcome { position: relative; flex-basis: 100%; text-align: center; font-family: var(--display); font-weight: 700; font-size: 1.25rem; margin-top: 8px; }
+.outcome.plat { color: #eef4ff; text-shadow: 0 0 12px rgba(205, 230, 255, .9); }
+.cabinet-card .outcome { background: var(--marble); border: 2px solid var(--line); border-radius: var(--r-control); padding: 10px; margin: 0 0 12px; color: var(--ink); text-shadow: none; }
+.cabinet-card .outcome.plat { border-color: #9fb2d3; background: #eef3fb; }
+.cabinet-card .outcome.lost { border-color: var(--wine); background: var(--wine-soft); }
+.cabinet-card .outcome.kept { border-color: var(--laurel); background: var(--laurel-soft); }
+
+/* Cabinet: this week's trophies + locked-in trophies */
+.cab-head { font-size: 1.25rem; margin: 18px 0 4px; }
+.cab-help { margin: 0 0 8px; }
+.cab-empty { color: rgba(255, 240, 210, .85); font-weight: 800; text-align: center; padding: 26px 8px 34px; margin: 0; }
+.trophy-slot { position: relative; }
+.trophy-slot.keeper { background: rgba(255, 226, 150, .16); box-shadow: inset 0 0 0 2px var(--gold-light); }
+.trophy-slot.selected { background: rgba(255, 255, 255, .14); box-shadow: inset 0 0 0 2px #fff; }
+.slot-badge { position: absolute; top: 2px; right: 4px; font-size: 1rem; line-height: 1; }
+.locked-slot { cursor: default; }
+.slot-week { font-size: .62rem; font-weight: 700; color: rgba(255, 240, 210, .7); text-align: center; line-height: 1.1; }
+.trophy-detail {
+  display: flex; gap: 18px; align-items: center; flex-wrap: wrap; background: #fff; border: 2px solid var(--gold);
+  border-radius: var(--r-panel); padding: 14px 18px; margin: -4px 0 8px;
+}
+.trophy-detail .trophy.xl { font-size: 4.6rem; }
+.detail-text { flex: 1; min-width: 220px; }
+.detail-name { font-family: var(--display); font-weight: 900; font-size: 1.4rem; }
+.detail-from { color: var(--muted); font-weight: 700; }
+.detail-note { margin: 8px 0 4px; font-weight: 700; }
+.detail-keep { font-weight: 800; color: var(--gold-deep); margin: 10px 0 0; }
+.trophy-detail #keep-this { margin-top: 10px; }
+.trophy-detail .decide { text-align: left; margin: 6px 0 4px; }
+.trophy-detail .decide-btns { justify-content: flex-start; }
+.trophy-detail .decide .btn { min-width: 0; }
+.trophy-detail .decide-odds { color: var(--muted); }
+@media (max-width: 520px) { .decide .btn { min-width: 0; width: 100%; } .slot-week { font-size: .55rem; } }

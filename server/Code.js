@@ -12,7 +12,11 @@ function doPost(e) {
   try { req = JSON.parse(e.postData.contents); } catch (err) { return json_({ ok: false, error: 'Bad request' }); }
   return json_(handleRequest(req));
 }
-function doGet() { return json_({ ok: true, message: 'Fluency game API is running.', now: Date.now() }); }
+/** Open the /exec URL in a browser to see which version of the code Google is running. */
+function doGet() {
+  return json_({ ok: true, message: 'Fluency game API is running.', serverVersion: CONFIG.SERVER_VERSION,
+                 playAgainInstalled: typeof playAgain_ === 'function', now: Date.now() });
+}
 function json_(obj) { return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON); }
 
 /** Pure function (also used by the offline demo and tests). */
@@ -47,8 +51,20 @@ function startSession_(s) {
 }
 
 function rules_() {
-  return { pointsCorrect: CONFIG.POINTS_CORRECT, pointsWrong: CONFIG.POINTS_WRONG, rankBy: CONFIG.RANK_BY,
+  return { serverVersion: CONFIG.SERVER_VERSION, wrongPenaltySec: CONFIG.WRONG_PENALTY_SEC,
+           reroll: { platinum: CONFIG.REROLL_PLATINUM_CHANCE, lose: CONFIG.REROLL_LOSE_CHANCE },
            minAttemptSeconds: CONFIG.MIN_ATTEMPT_SECONDS, submitGraceMs: CONFIG.SUBMIT_GRACE_MS, levelCounts: CONFIG.LEVEL_COUNTS };
+}
+
+function keeperAction_(req) {
+  var s = authStudent_(req);
+  return withLock_(function () {
+    var now = Date.now(), p = getProfile_(s.id);
+    setKeeper_(p, String(req.id || ''), now);
+    var upd = {}; upd[s.id] = p;
+    saveProfiles_(upd);
+    return { cabinet: cabinetView_(p, now) };
+  });
 }
 
 var ACTIONS = {
@@ -87,23 +103,32 @@ var ACTIONS = {
     return { profile: profileView_(getProfile_(s.id)), rules: rules_() };
   },
 
-  /** The student's trophy cabinet (shelves are emptied each Sunday; the favourite stays). */
+  /** The student's trophy cabinet: this week's trophies (one will be kept) and the locked ones from past weeks. */
   cabinet: function (req) {
     var s = authStudent_(req);
-    return { cabinet: cabinetView_(getProfile_(s.id), Date.now()) };
+    return withLock_(function () {
+      var now = Date.now(), p = getProfile_(s.id), before = JSON.stringify(p.cab || null);
+      var view = cabinetView_(p, now);
+      if (JSON.stringify(p.cab) !== before) { var upd = {}; upd[s.id] = p; saveProfiles_(upd); } // a week was just locked in
+      return { cabinet: view };
+    });
   },
 
-  /** Puts the tapped trophy on the top shelf. */
-  setFavourite: function (req) {
+  /** An undecided trophy: req.choice 'keep' (put it in the cabinet as it is) or 'reroll' (platinum / lost / stays gold). */
+  trophyDecision: function (req) {
     var s = authStudent_(req);
     return withLock_(function () {
       var now = Date.now(), p = getProfile_(s.id);
-      setFavourite_(p, String(req.id || ''), now);
+      var r = decideTrophy_(p, String(req.id || ''), String(req.choice || ''), now);
       var upd = {}; upd[s.id] = p;
       saveProfiles_(upd);
-      return { cabinet: cabinetView_(p, now) };
+      return { outcome: r.outcome, trophy: r.trophy, cabinet: cabinetView_(p, now) };
     });
   },
+
+  /** Picks which of this week's trophies will be locked into the cabinet. (setFavourite = old name, for cached pages.) */
+  setKeeper: function (req) { return keeperAction_(req); },
+  setFavourite: function (req) { return keeperAction_(req); },
 
   practiceSubmit: function (req) {
     var s = authStudent_(req);
@@ -114,12 +139,11 @@ var ACTIONS = {
     var seconds = Math.max(0, Math.min(900, Number(req.seconds) || 0));
     if (seconds < CONFIG.MIN_ATTEMPT_SECONDS) return { saved: false, profile: profileView_(getProfile_(s.id)) };
     return withLock_(function () {
-      var now = Date.now(), p = getProfile_(s.id), t = attemptTime_(seconds, correct);
-      var pts = correct * CONFIG.POINTS_CORRECT + wrong * CONFIG.POINTS_WRONG;
+      var now = Date.now(), p = getProfile_(s.id), t = attemptTime_(seconds, correct, wrong);
       recordAttempt_(p, req.op, level, t, now);
       var upd = {}; upd[s.id] = p;
       saveProfiles_(upd);
-      appendAttempts_([[new Date(now), s.id, s.name, 'practice', req.op, level, correct, wrong, round2_(seconds), t, pts, '']]);
+      appendAttempts_([[new Date(now), s.id, s.name, 'practice', req.op, level, correct, wrong, round2_(seconds), t, '', '']]);
       return { saved: true, avgTime: t, profile: profileView_(p) };
     });
   },

@@ -411,10 +411,11 @@ function submitResult_(student, round, correct, wrong, seconds) {
 /**
  * Ranks teams, saves every result to the sheet (one write), updates profiles, hands out trophies. Idempotent.
  * Ranking rules:
+ *  - Time per correct answer = (seconds played + WRONG_PENALTY_SEC per wrong answer) / correct answers. Lower wins.
  *  - A team with no correct answers (or no results at all) has no result: it gets no place (rank null) and is listed last.
  *  - Times are compared unrounded (avgRaw), so two teams that both show 4.37 s still get the right places.
  *    The screens show extra decimal places where needed.
- *  - Teams equal on time AND points share the place. If that place is 1st, every team on it gets the trophy.
+ *  - Teams with exactly the same time share the place. If that place is 1st, every team on it gets the trophy.
  *  - Nobody with a result -> no trophy at all.
  */
 function finishGame_(code) {
@@ -429,8 +430,7 @@ function finishGame_(code) {
 
     ids.forEach(function (id) {
       var sub = room.subs[id], a = g.assign[id];
-      var pts = sub.c * CONFIG.POINTS_CORRECT + sub.w * CONFIG.POINTS_WRONG;
-      var t = attemptTime_(sub.s, sub.c);
+      var t = attemptTime_(sub.s, sub.c, sub.w);
       var saved = sub.s >= CONFIG.MIN_ATTEMPT_SECONDS;
       var p = profiles[id] = profiles[id] || {};
       var before = opSummary_(p, g.op, cutoff, now).current;
@@ -438,39 +438,41 @@ function finishGame_(code) {
         recordAttempt_(p, g.op, a.level, t, now);
         updates[id] = p;
         var name = room.players[id] ? room.players[id].name : '';
-        rows.push([new Date(now), id, name, 'class', g.op, a.level, sub.c, sub.w, round2_(sub.s), t, pts, room.code]);
+        // The last-but-one column used to hold points; it is left blank now (kept so older rows still line up).
+        rows.push([new Date(now), id, name, 'class', g.op, a.level, sub.c, sub.w, round2_(sub.s), t, '', room.code]);
       }
       var after = opSummary_(p, g.op, cutoff, now);
-      personal[id] = { correct: sub.c, wrong: sub.w, points: pts, avgTime: sub.c > 0 ? t : null, level: a.level, saved: saved,
-                       newLevel: after.current, levelUp: after.current > before, mastered: after.mastered };
+      personal[id] = { correct: sub.c, wrong: sub.w, penalty: sub.w * CONFIG.WRONG_PENALTY_SEC, avgTime: sub.c > 0 ? t : null,
+                       level: a.level, saved: saved, newLevel: after.current, levelUp: after.current > before, mastered: after.mastered };
     });
 
     var teams = g.teams.map(function (tm, i) {
-      var c = 0, w = 0, s = 0, pts = 0, played = 0;
+      var c = 0, w = 0, s = 0, played = 0;
       tm.members.forEach(function (id) {
         var sub = room.subs[id];
         if (!sub) return;
-        played++; c += sub.c; w += sub.w; s += sub.s; pts += sub.c * CONFIG.POINTS_CORRECT + sub.w * CONFIG.POINTS_WRONG;
+        played++; c += sub.c; w += sub.w; s += sub.s;
       });
+      var raw = c > 0 ? rawTime_(s, c, w) : null;
       return { index: i, name: tm.name, emoji: tm.emoji, hex: tm.hex, size: tm.members.length, played: played,
-               correct: c, wrong: w, points: pts, exp: tm.exp !== undefined ? tm.exp : null,
-               avgRaw: c > 0 ? s / c : null, avgTime: c > 0 ? round2_(s / c) : null };
+               correct: c, wrong: w, exp: tm.exp !== undefined ? tm.exp : null,
+               avgRaw: raw, avgTime: raw === null ? null : round2_(raw) };
     });
     teams = teams.filter(function (t) { return t.size > 0; }); // everyone on this team left
     teams.sort(function (a, b) {
       var ra = hasResult_(a), rb = hasResult_(b);
       if (ra !== rb) return ra ? -1 : 1;
-      if (CONFIG.RANK_BY === 'points') return b.points - a.points || cmpTime_(a, b);
-      return cmpTime_(a, b) || b.points - a.points;
+      return cmpTime_(a, b);
     });
     var prev = null;
     teams.forEach(function (t, i) {
       if (!hasResult_(t)) { t.rank = null; return; }
-      t.rank = prev && sameResult_(prev, t) ? prev.rank : i + 1;
+      t.rank = prev && cmpTime_(prev, t) === 0 ? prev.rank : i + 1;
       prev = t;
     });
 
     // Trophy: every player on the winning team(s) who sent in a result gets the same one. No result -> no trophy.
+    // Each player's copy is undecided until they put it in their cabinet or re-roll it.
     var winners = teams.filter(function (t) { return t.rank === 1; });
     if (winners.length) {
       var trophy = pickTrophy_(room.lastTrophy);
@@ -479,9 +481,9 @@ function finishGame_(code) {
         win.trophy = trophy;
         g.teams[win.index].members.forEach(function (id) {
           if (!room.subs[id]) return;
-          awardTrophy_(profiles[id], trophy, g.op, win.name, now);
+          var item = awardTrophy_(profiles[id], trophy, g.op, win.name, now);
           updates[id] = profiles[id];
-          personal[id].trophy = trophy;
+          personal[id].trophy = { id: item.id, e: item.e, n: item.n };
         });
       });
     }
@@ -496,15 +498,14 @@ function finishGame_(code) {
 }
 /** A team has a result when it answered at least one question correctly. */
 function hasResult_(t) { return t.correct > 0 && t.played > 0; }
-function rawTime_(t) { return t.avgRaw !== undefined && t.avgRaw !== null ? t.avgRaw : t.avgTime; }
+function teamTime_(t) { return t.avgRaw !== undefined && t.avgRaw !== null ? t.avgRaw : t.avgTime; }
 function cmpTime_(a, b) {
-  var x = rawTime_(a), y = rawTime_(b);
+  var x = teamTime_(a), y = teamTime_(b);
   if (x === null && y === null) return 0;
   if (x === null) return 1;
   if (y === null) return -1;
   return Math.abs(x - y) < 1e-9 ? 0 : x - y;
 }
-function sameResult_(a, b) { return cmpTime_(a, b) === 0 && a.points === b.points; }
 
 function newRound_(code) {
   return withLock_(function () {

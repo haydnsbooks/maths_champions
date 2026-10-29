@@ -39,16 +39,16 @@ A class multiplayer maths fluency game. Every student answers questions at **the
 3. Server reads everyone's profile, finds each student's current level and average time at that level for that operation, and forms teams whose average times are as even as possible. Each iPad shows its team name + emoji only (teammates stay secret) and an 8-second countdown. The teacher screen shows each team's expected average time and how evenly they're matched.
 4. Students play. **No server traffic during play** — questions are generated on the iPad.
 5. When time is up, each iPad sends one small result. The teacher screen finishes the round (when all results are in, or after 15 s), which ranks teams, writes every attempt to the sheet in **one write**, updates profiles and hands out the winning team's trophy.
-6. Grand celebration on every screen, including the round's prize trophy. Winning players also see **"You won a trophy!"**. Teacher can tick **Show team members**.
+6. Grand celebration on every screen, including the round's prize trophy. Winning players also see **"You won a trophy!"** and choose to put it in their cabinet or re-roll it. Teacher can tick **Show team members**.
 7. **Play again:** on the results screen, choose the next **operation**, **time** and **teams** (same teams, or new teams / individual) → **▶ Play round N**. Everyone still on the class-game screen goes straight into a 10-second countdown; students don't need to do anything. (**Back to lobby** and **Close room** are underneath.)
 
 ## 3. The rules (as built)
 | Rule | Implementation | Where to change |
 |---|---|---|
-| Points | +10 correct, −5 wrong (shown during play) | `server/Config.js` `POINTS_*` |
-| Winner | Lowest **team average time per correct answer** = total seconds played ÷ total correct (wrong answers cost time, so they count against you). Compared unrounded; if two teams would show the same time, extra decimal places are shown. Equal time → more points wins; equal time and points → shared place | `RANK_BY` (`'avgTime'` or `'points'`) |
+| Wrong answers | every wrong answer adds **1 s** to the student's time (shown as "Penalty +N s" during play). There are no points | `WRONG_PENALTY_SEC` in `server/Config.js` |
+| Winner | Lowest **team time per correct answer** = (total seconds played + 1 s per wrong answer) ÷ total correct. Compared unrounded; if two teams would show the same time, extra decimal places are shown. Exactly the same time → shared place | `finishGame_` in `server/Rooms.js` |
 | No result | A team with no correct answers gets no place. If nobody has a result, there are no places and no trophy | `finishGame_` in `server/Rooms.js` |
-| Attempt time | seconds played ÷ correct answers | `server/Fluency.js` |
+| Attempt time | (seconds played + 1 s per wrong answer) ÷ correct answers — same rule in practice and class games | `attemptTime_` in `server/Fluency.js` |
 | Fluency time | average of the **3 most recent attempts** at that level + dust | `RECENT_ATTEMPTS` |
 | Fluent | ≥ 1 attempt **and** fluency time ≤ cut-off | `MIN_ATTEMPTS_FOR_FLUENCY`, cut-offs on teacher page |
 | Dust | +0.5 s for every new week (Monday 00:00 Perth time) since that level was last played; playing the level clears it | `DUST_PER_WEEK`, `TZ_OFFSET_HOURS` |
@@ -60,8 +60,9 @@ A class multiplayer maths fluency game. Every student answers questions at **the
 | Question order | small levels (e.g. a times table) are a shuffled deck: every fact once before any repeat, never the same fact twice in a row, wrong answers come back later in the deck. Huge levels are random with no repeats in a game | `Levels.deck` in `js/levels.js` |
 | Leaving | ✕ Leave on every game and countdown screen. Leaving a class round mid-game removes the student from that round so the teacher isn't kept waiting | `leaveRoom` in `server/Code.js` |
 | Trophies | every player on the winning team of a class round who sent in a result gets the same trophy (random from a Greek-myth list, never the same as the previous round's). Teams tied for 1st all get it. Practice gives no trophies | `TROPHIES` in `server/Config.js` |
-| Trophy cabinet | **🏆 Trophy cabinet** on the student menu. Tap a trophy → it goes on the big top shelf as the favourite (the old favourite goes back on a shelf). Every **Sunday 00:00 Perth time** the shelves are emptied; the favourite stays. Up to 60 trophies a week | `server/Trophies.js`, `TROPHY_SHELF_MAX` |
-| Gold trophies | any emoji is drawn gold by a CSS filter, so the list can use any emoji | `.trophy` in `css/style.css` |
+| Keep or re-roll | straight after winning (or later in the cabinet) each winner chooses **Put it in my cabinet** or **🎲 Re-roll**: 5% it turns **platinum**, 95% it's lost. Platinum can't be re-rolled | `REROLL_PLATINUM_CHANCE`, `REROLL_LOSE_CHANCE` |
+| Trophy cabinet | **🏆 Trophy cabinet** on the student menu. Top: this week's trophies — tap one → **⭐ Keep this one this week**. At **Sunday 00:00 Perth time** the ⭐ trophy is **locked in for good** (bottom shelves, labelled with its week) and the rest are cleared. No choice made → best one is kept (platinum first, then newest). Up to 60 trophies a week | `server/Trophies.js`, `TROPHY_SHELF_MAX` |
+| Gold / platinum trophies | any emoji is drawn gold (or platinum) by a CSS filter, so the list can use any emoji | `.trophy`, `.trophy.plat` in `css/style.css` |
 
 ## 4. Sheet traffic (why this won't overload Google)
 - Rooms, logins and lobby polling live in Apps Script **CacheService** (memory), not the sheet. Students/Settings/Profiles are cached too.
@@ -85,7 +86,7 @@ js/student.js         Student screens: login, menu, practice, my levels, trophy 
 js/teacher.js         Teacher screens: room, start, results + Play again, cut-offs, class levels, passwords
 js/demo/mock-gas.js   Fake Google services for demo + tests (NOT for Apps Script)
 apps-script/Code.gs   ALL server code in one file — this is what you paste into Apps Script (built from server/)
-server/Config.js      Server rules: points, fluency, dust, balancing, timing, team names, trophy list ← server settings
+server/Config.js      Server rules: wrong-answer penalty, re-roll odds, fluency, dust, balancing, timing, team names, trophy list ← server settings
 server/Code.js        API router: list of actions
 server/Store.js       All Sheet/Cache reads & writes, setup()
 server/Fluency.js     Levels, dust, fluency, profiles
@@ -102,6 +103,6 @@ tests/run-tests.js    `node tests/run-tests.js` — checks 2,000 questions per l
 **After changing anything in `server/`:** run `node tools/build-apps-script.js` to rebuild `apps-script/Code.gs`, paste that into Apps Script, Save, and deploy a new version.
 
 ## 6. Data
-- **Attempts** sheet: one row per game per student (timestamp, id, name, mode, op, level, correct, wrong, seconds, avgTime, points, room) — use it for reporting/filters.
-- **Profiles** sheet: one JSON cell per student (last 3 times per level, plus the trophy cabinet under `"cab"`). Don't edit by hand unless you're sure; run *Refresh cached data* afterwards.
+- **Attempts** sheet: one row per game per student (timestamp, id, name, mode, op, level, correct, wrong, seconds, avgTime, points, room) — use it for reporting/filters. `avgTime` includes the 1 s per wrong answer from 29 Oct 2026; the `points` column is left blank from then on (older rows keep their points).
+- **Profiles** sheet: one JSON cell per student (last 3 times per level, plus the trophy cabinet under `"cab"`: this week's trophies, the chosen one, and the locked-in ones). Don't edit by hand unless you're sure; run *Refresh cached data* afterwards.
 - Students create their own password on first log-in (at least 4 characters, not case-sensitive) and are told to write it down. Passwords are stored in plain text in your private sheet so you can look one up if a student forgets. To reset one: teacher page → **🔑 Passwords** → choose the student → **Reset password** (or the Reset password button on Class levels). They create a new one at their next log-in; their levels and trophies are kept. Because a blank password can be claimed by whoever picks that name first, have everyone do their first log-in together in class.

@@ -11,7 +11,7 @@
 var SHEETS = {
   Students: ['id', 'name', 'password', 'active'],
   Profiles: ['id', 'profileJson', 'updated'],
-  Attempts: ['timestamp', 'id', 'name', 'mode', 'op', 'level', 'correct', 'wrong', 'seconds', 'avgTime', 'points', 'room'],
+  Attempts: ['timestamp', 'id', 'name', 'mode', 'op', 'level', 'correct', 'wrong', 'seconds', 'avgTime', 'unused', 'room'],
   Settings: ['key', 'value']
 };
 

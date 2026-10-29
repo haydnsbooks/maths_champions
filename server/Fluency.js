@@ -8,7 +8,7 @@
  *     t = time of the last attempt (ms) — dust is counted from here
  *
  * Rules:
- *   attempt time   = seconds played / correct answers (wrong answers cost time, so they count against you)
+ *   attempt time   = (seconds played + WRONG_PENALTY_SEC (1 s) per wrong answer) / correct answers
  *   fluency time   = average of the last 3 attempts (or fewer, if fewer have been played) + dust
  *   dust           = 0.5 s for every new week (Monday) since the level was last played
  *   fluent         = at least MIN_ATTEMPTS_FOR_FLUENCY attempts (currently 1) AND fluency time <= cut-off
@@ -35,7 +35,11 @@ function cutoffs_() {
   return out;
 }
 
-function attemptTime_(seconds, correct) { return round2_(seconds / Math.max(correct, 1)); }
+/** Seconds per correct answer, with WRONG_PENALTY_SEC added for every wrong answer. Unrounded. */
+function rawTime_(seconds, correct, wrong) {
+  return (Number(seconds) + (Number(wrong) || 0) * CONFIG.WRONG_PENALTY_SEC) / Math.max(Number(correct) || 0, 1);
+}
+function attemptTime_(seconds, correct, wrong) { return round2_(rawTime_(seconds, correct, wrong)); }
 
 function levelStats_(entry, cutoff, now) {
   if (!entry || !entry.r || !entry.r.length) return { attempts: 0, avg: null, dust: 0, time: null, fluent: false, last: null };

@@ -2,7 +2,8 @@
  * GAME ENGINE — the timed question screen with number pad. Used by practice AND class games.
  *
  * Game.play(containerEl, {op, level, endAt, clock, rules, label, quitConfirm})
- *   -> Promise<{correct, wrong, points, seconds, quit}>
+ *   -> Promise<{correct, wrong, seconds, quit}>
+ *   Every wrong answer adds rules.wrongPenaltySec (1 s) to the student's time per correct answer (worked out on the server).
  *   endAt       : time the game stops (in the same clock as `clock()`)
  *   clock       : function returning "now" in ms (API.now for class games so every iPad stops together)
  *   quitConfirm : if set, this question is asked before quitting (class games)
@@ -41,12 +42,13 @@
 
   function play(el, opts) {
     return new Promise(function (resolve) {
-      var rules = opts.rules || { pointsCorrect: 10, pointsWrong: -5 };
+      var rules = opts.rules || {};
+      var pen = rules.wrongPenaltySec !== undefined ? rules.wrongPenaltySec : 1;
       var clock = opts.clock || Date.now;
       var startedAt = clock();
       var total = Math.max(1, opts.endAt - startedAt);
       var deck = Levels.deck(opts.op, opts.level);
-      var st = { correct: 0, wrong: 0, points: 0, input: '', q: null, locked: false, done: false };
+      var st = { correct: 0, wrong: 0, input: '', q: null, locked: false, done: false };
       var flipped = padFlipped();
 
       el.innerHTML =
@@ -57,7 +59,7 @@
             '<div class="hud">' +
               '<div class="hud-item"><span class="hud-label">Time</span><span class="hud-val" data-timer>–</span></div>' +
               '<div class="hud-item"><span class="hud-label">Correct</span><span class="hud-val" data-correct>0</span></div>' +
-              '<div class="hud-item"><span class="hud-label">Points</span><span class="hud-val" data-points>0</span></div>' +
+              '<div class="hud-item"><span class="hud-label">Penalty</span><span class="hud-val" data-penalty>0 s</span></div>' +
             '</div>' +
             '<div class="timebar"><div data-bar></div></div>' +
             '<div class="question" data-q></div>' +
@@ -74,7 +76,7 @@
 
       var $ = function (sel) { return el.querySelector(sel); };
       var qEl = $('[data-q]'), ansBox = $('[data-ans]'), ansText = $('[data-ans-text]'), reveal = $('[data-reveal]');
-      var timerEl = $('[data-timer]'), barEl = $('[data-bar]'), ptsEl = $('[data-points]'), corEl = $('[data-correct]');
+      var timerEl = $('[data-timer]'), barEl = $('[data-bar]'), penEl = $('[data-penalty]'), corEl = $('[data-correct]');
       var padEl = $('.pad'), flipBtn = $('[data-flip]');
 
       function next() {
@@ -95,20 +97,21 @@
       function submit() {
         if (!st.input) return;
         if (Number(st.input) === st.q.answer) {
-          st.correct++; st.points += rules.pointsCorrect;
+          st.correct++;
           ansBox.className = 'answer right';
           zap();
           st.locked = true;
           setTimeout(function () { st.locked = false; if (!st.done) next(); }, C.RIGHT_FLASH_MS);
         } else {
-          st.wrong++; st.points += rules.pointsWrong;
+          st.wrong++;
           deck.missed(st.q);
           ansBox.className = 'answer wrong';
-          reveal.textContent = st.q.text + ' = ' + st.q.answer;
+          reveal.textContent = st.q.text + ' = ' + st.q.answer + (pen ? '   (+' + pen + ' s)' : '');
           st.locked = true;
           setTimeout(function () { st.locked = false; if (!st.done) next(); }, C.WRONG_PAUSE_MS);
         }
-        ptsEl.textContent = st.points;
+        penEl.textContent = (st.wrong * pen ? '+' : '') + (Math.round(st.wrong * pen * 10) / 10) + ' s';
+        penEl.parentNode.classList.toggle('penalised', st.wrong > 0);
         corEl.textContent = st.correct;
       }
 
@@ -160,7 +163,7 @@
         document.removeEventListener('keydown', onKey);
         el.querySelector('.play').classList.add('finished');
         var seconds = Math.round((Math.min(clock(), opts.endAt) - startedAt) / 10) / 100;
-        resolve({ correct: st.correct, wrong: st.wrong, points: st.points, seconds: Math.max(0, seconds), quit: !!quit });
+        resolve({ correct: st.correct, wrong: st.wrong, penalty: st.wrong * pen, seconds: Math.max(0, seconds), quit: !!quit });
       }
       var iv = setInterval(tick, 100);
       next();

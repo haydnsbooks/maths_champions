@@ -154,7 +154,57 @@
 
   /* ---------- trophy cabinet ---------- */
   var SHELF_SLOTS = 5;   // trophies per shelf
-  var MIN_SHELVES = 2;   // empty shelves still show, so it looks like a cabinet from day one
+
+  function rules() { return S.session.rules || {}; }
+  function odds() { return rules().reroll || { platinum: 0.05, lose: 0.95 }; }
+  function perthDate(ms, opts) { return new Date(ms).toLocaleDateString('en-AU', Object.assign({ timeZone: 'Australia/Perth' }, opts)); }
+
+  /**
+   * Wires up "Put it in my cabinet / Re-roll" buttons inside `root`. onDone(result) is called after the server answers.
+   * Re-rolling shows a short dice spin first so the result feels like a reveal.
+   */
+  function bindDecisions(root, onDone) {
+    root.querySelectorAll('.decide').forEach(function (box) {
+      var id = box.getAttribute('data-decide-for');
+      box.querySelectorAll('[data-decide]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var choice = btn.getAttribute('data-decide');
+          if (choice === 'reroll' && !window.confirm('Re-roll this trophy?\n\n' + Math.round(odds().platinum * 100) + '% chance it turns PLATINUM.\n' +
+              Math.round(odds().lose * 100) + '% chance you LOSE it.')) return;
+          box.querySelectorAll('button').forEach(function (b) { b.disabled = true; });
+          var spin = choice === 'reroll' ? new Promise(function (r) { box.insertAdjacentHTML('beforeend', '<div class="rolling" aria-live="polite"><span class="dice">🎲</span> Rolling…</div>'); setTimeout(r, 1400); }) : Promise.resolve();
+          var req = API.call('trophyDecision', { token: S.session.token, id: id, choice: choice });
+          Promise.all([req, spin]).then(function (all) { onDone(all[0], box); })
+            .catch(function (e) { var r = box.querySelector('.rolling'); if (r) r.remove(); box.querySelectorAll('button').forEach(function (b) { b.disabled = false; }); fail(e); });
+        });
+      });
+    });
+  }
+
+  /** Message for the result of a keep / re-roll. */
+  function outcomeHtml(res) {
+    if (res.outcome === 'kept') return '<div class="outcome kept">✅ It\'s in your trophy cabinet.</div>';
+    if (res.outcome === 'platinum') return '<div class="outcome plat">✨ PLATINUM! Your ' + esc(res.trophy.n) + ' is now platinum. It\'s in your cabinet.</div>';
+    if (res.outcome === 'lost') return '<div class="outcome lost">💨 It\'s gone! Better luck next time.</div>';
+    return '<div class="outcome">It stayed gold. Re-roll again or keep it.</div>';
+  }
+
+  /** On the win screen: replace the buttons with the outcome and update the trophy picture. */
+  function decidedOnResults(res, box) {
+    var panel = box.closest('.trophy-won'), t = panel && panel.querySelector('.trophy');
+    var note = panel && panel.querySelector('.trophy-won-note');
+    if (note && res.outcome !== 'gold') note.textContent = '';
+    if (res.outcome === 'platinum') Celebrate.confetti(3000);
+    if (res.outcome === 'platinum' && t) { t.classList.add('plat', 'shine'); panel.classList.add('plat'); panel.querySelector('.trophy-won-name').textContent = Celebrate.trophyName(res.trophy); }
+    if (res.outcome === 'lost' && t) { t.classList.add('vanish'); panel.classList.add('lost'); }
+    if (res.outcome === 'gold') { // only possible if REROLL chances add up to less than 100%
+      panel.querySelectorAll('.outcome').forEach(function (m) { m.remove(); });
+      box.outerHTML = outcomeHtml(res) + Celebrate.decision({ id: res.trophy.id }, odds());
+      bindDecisions(panel, decidedOnResults);
+      return;
+    }
+    box.outerHTML = outcomeHtml(res);
+  }
 
   function showCabinet() {
     stopPolling();
@@ -162,43 +212,73 @@
     API.call('cabinet', { token: S.session.token }).then(function (r) { drawCabinet(r.cabinet); }).catch(fail);
   }
 
-  function drawCabinet(cab, justPicked) {
-    var T = Celebrate.trophy;
-    var items = cab.items || [];
-    var shelves = [];
-    for (var i = 0; i < Math.max(items.length, MIN_SHELVES * SHELF_SLOTS); i += SHELF_SLOTS) shelves.push(items.slice(i, i + SHELF_SLOTS));
-    var slot = function (t) {
-      return '<button class="trophy-slot" data-id="' + esc(t.id) + '" aria-label="' + esc(t.n) + '. Tap to make it your favourite">' +
-        T(t, 'md') + '<span class="slot-name">' + esc(t.n) + '</span></button>';
+  function shelvesHtml(list, slot, minShelves) {
+    var out = '';
+    for (var i = 0; i < Math.max(list.length, (minShelves || 1) * SHELF_SLOTS); i += SHELF_SLOTS) {
+      var row = list.slice(i, i + SHELF_SLOTS), html = row.map(slot).join('');
+      for (var k = row.length; k < SHELF_SLOTS; k++) html += '<span class="trophy-slot empty" aria-hidden="true"></span>';
+      out += '<div class="shelf">' + html + '</div>';
+    }
+    return out;
+  }
+
+  /** cab = {week: {items, keeper, chosen, locksAt}, locked: [...]}. selectedId = trophy whose details are open. */
+  function drawCabinet(cab, selectedId, message) {
+    var T = Celebrate.trophy, wk = cab.week, items = wk.items || [], locked = cab.locked || [];
+    var byId = {}; items.forEach(function (t) { byId[t.id] = t; });
+    var sel = byId[selectedId] || null;
+    var lockDay = perthDate(wk.locksAt - 1, { weekday: 'long', day: 'numeric', month: 'short' });
+
+    var weekSlot = function (t) {
+      return '<button class="trophy-slot' + (t.id === wk.keeper ? ' keeper' : '') + (sel && t.id === sel.id ? ' selected' : '') + '" data-id="' + esc(t.id) + '" aria-label="' + esc(Celebrate.trophyName(t)) + '">' +
+        (t.id === wk.keeper ? '<span class="slot-badge keep">⭐</span>' : t.open ? '<span class="slot-badge open">🎲</span>' : '') +
+        T(t, 'md') + '<span class="slot-name">' + esc(Celebrate.trophyName(t)) + '</span></button>';
     };
-    var top = cab.fav
-      ? '<div class="fav' + (justPicked ? ' just-picked' : '') + '">' + T(cab.fav, 'xl') +
-          '<div class="fav-name">' + esc(cab.fav.n) + '</div>' +
-          '<div class="fav-from">Won with the ' + esc(cab.fav.team) + ' · ' + esc(Levels.OPS[cab.fav.op] ? Levels.OPS[cab.fav.op].name : '') + '</div></div>'
-      : '<div class="fav-empty">' + (items.length ? 'Tap your favourite trophy to put it up here ⬆️' : 'Your favourite trophy will stand here') + '</div>';
+    var lockedSlot = function (t) {
+      return '<span class="trophy-slot locked-slot">' + T(t, 'md') + '<span class="slot-name">' + esc(Celebrate.trophyName(t)) + '</span>' +
+        '<span class="slot-week">Week of ' + esc(perthDate(t.from, { day: 'numeric', month: 'short', year: 'numeric' })) + '</span></span>';
+    };
+
+    var detail = '';
+    if (sel) {
+      detail = '<div class="trophy-detail">' + T(sel, 'xl') +
+        '<div class="detail-text"><div class="detail-name">' + esc(Celebrate.trophyName(sel)) + '</div>' +
+        '<div class="detail-from">Won with the ' + esc(sel.team) + ' · ' + esc(Levels.OPS[sel.op] ? Levels.OPS[sel.op].name : '') + '</div>' +
+        (sel.open ? '<p class="detail-note">You haven\'t decided about this one yet.</p>' + Celebrate.decision(sel, odds()) : '') +
+        (sel.id === wk.keeper
+          ? '<p class="detail-keep">⭐ ' + (wk.chosen ? 'This is the one you\'re keeping this week.' : 'This one will be kept unless you choose another.') + '</p>'
+          : '<button class="btn primary" id="keep-this">⭐ Keep this one this week</button>') +
+        '</div></div>';
+    }
 
     render('<div class="card wide cabinet-card">' + backBtn('Menu') +
       '<h2 class="center">🏆 My Trophy Cabinet</h2>' +
-      '<div class="cabinet">' +
-        '<div class="shelf top-shelf"><div class="plaque">★ Favourite ★</div>' + top + '</div>' +
-        shelves.map(function (row) {
-          var html = row.map(slot).join('');
-          for (var k = row.length; k < SHELF_SLOTS; k++) html += '<span class="trophy-slot empty" aria-hidden="true"></span>';
-          return '<div class="shelf">' + html + '</div>';
-        }).join('') +
-      '</div>' +
-      '<p class="cabinet-note">' + (items.length
-        ? 'This week: <b>' + items.length + '</b> troph' + (items.length === 1 ? 'y' : 'ies') + '. Tap one to make it your favourite.'
-        : 'Win a class game with your team to earn a trophy!') + '</p>' +
-      '<p class="muted small center">The shelves are cleared every Sunday. Your favourite stays on the top shelf.</p>' +
+      (message || '') +
+      '<h3 class="cab-head">This week\'s trophies</h3>' +
+      '<p class="cab-help">' + (items.length
+        ? 'Keep <b>one</b> trophy each week. Tap a trophy, then <b>⭐ Keep this one</b>. At midnight on <b>' + esc(lockDay) + '</b> your ⭐ trophy is locked into your cabinet for good and the others are cleared.' +
+          (wk.chosen ? '' : ' <b>You haven\'t chosen yet</b>, so your best one (⭐) will be kept.')
+        : 'Win a class game with your team to earn a trophy! Each week you keep your favourite one.') + '</p>' +
+      '<div class="cabinet week-cabinet">' + shelvesHtml(items, weekSlot, 1) + '</div>' +
+      detail +
+      '<h3 class="cab-head">Locked in for good</h3>' +
+      '<div class="cabinet">' + (locked.length ? shelvesHtml(locked, lockedSlot, 1)
+        : '<p class="cab-empty">The trophy you keep each week will be locked in here forever.</p>') + '</div>' +
     '</div>');
     on('[data-back]', 'click', showMenu);
     onAll('.trophy-slot[data-id]', 'click', function (b) {
-      if (app.querySelector('.trophy-slot.lifting')) return;
-      b.classList.add('lifting');
-      API.call('setFavourite', { token: S.session.token, id: b.getAttribute('data-id') })
-        .then(function (r) { drawCabinet(r.cabinet, true); })
-        .catch(function (e) { b.classList.remove('lifting'); fail(e); });
+      var id = b.getAttribute('data-id');
+      drawCabinet(cab, sel && sel.id === id ? null : id);
+      var d = app.querySelector('.trophy-detail'); if (d) d.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    });
+    on('#keep-this', 'click', function () {
+      var b = app.querySelector('#keep-this'); b.disabled = true;
+      API.call('setKeeper', { token: S.session.token, id: sel.id })
+        .then(function (r) { drawCabinet(r.cabinet, sel.id); })
+        .catch(function (e) { b.disabled = false; fail(e); });
+    });
+    bindDecisions(app, function (res) {
+      drawCabinet(res.cabinet, res.trophy && res.outcome !== 'lost' ? res.trophy.id : null, outcomeHtml(res));
     });
   }
 
@@ -247,13 +327,14 @@
       S.session.profile = saved.profile; saveSession();
     } catch (e) { err = e; if (e.code === 'SESSION_EXPIRED') return fail(e); }
     var st = S.session.profile[op].levels[level - 1], sum = S.session.profile[op];
-    var each = res.correct ? (res.seconds / res.correct) : null;
+    // Same rule as the server: (seconds + penalty) / correct. Use the server's figure when the game was saved.
+    var each = saved && saved.saved ? saved.avgTime : res.correct ? (res.seconds + (res.penalty || 0)) / res.correct : null;
     render('<div class="card temple narrow center">' +
       '<h2>' + (res.correct ? 'Well fought!' : 'Keep training!') + '</h2>' +
       '<p class="muted">' + esc(Levels.label(op, level)) + '</p>' +
       '<div class="stat-grid">' +
         '<div><b>' + res.correct + '</b><span>correct</span></div><div><b>' + res.wrong + '</b><span>wrong</span></div>' +
-        '<div><b>' + (each ? each.toFixed(2) + ' s' : '—') + '</b><span>per correct</span></div><div><b>' + res.points + '</b><span>points</span></div>' +
+        '<div><b>' + (each !== null ? each.toFixed(2) + ' s' : '—') + '</b><span>per correct</span></div><div><b>' + (res.penalty ? '+' + res.penalty + ' s' : '0 s') + '</b><span>penalty</span></div>' +
       '</div>' +
       (err ? '<p class="warn">Couldn\'t save this game: ' + esc(err.message) + '</p>' :
         !saved.saved ? '<p class="muted">This game was too short to save.</p>' :
@@ -386,7 +467,9 @@
         mp.resultsRound = room.round; mp.view = 'results' + room.round;
         render('<div class="card wide" id="res"></div><div class="center after-results">' + inRoomBanner('Still in the game room. Waiting for the next round…') +
           '<button class="btn ghost" id="leave">← Leave the room</button></div>');
-        Celebrate.results(app.querySelector('#res'), { teams: room.results.teams, myTeam: room.results.myTeam, me: room.results.me, rankBy: S.session.rules.rankBy });
+        Celebrate.results(app.querySelector('#res'), { teams: room.results.teams, myTeam: room.results.myTeam, me: room.results.me,
+                                                       penalty: rules().wrongPenaltySec, odds: odds() });
+        bindDecisions(app, decidedOnResults);
         on('#leave', 'click', leaveRoom);
       }
       return poll(C.RESULTS_POLL_MS);
@@ -412,7 +495,7 @@
     }
     if (S.mp !== mp) return;
     var res;
-    if (API.now() >= g.endAt) res = { correct: 0, wrong: 0, points: 0, seconds: 0 };
+    if (API.now() >= g.endAt) res = { correct: 0, wrong: 0, penalty: 0, seconds: 0 };
     else res = await Game.play(app, { op: g.op, level: g.level, endAt: g.endAt, clock: API.now, rules: S.session.rules,
                                       label: g.team.emoji + ' ' + g.team.name + ' · ' + Levels.title(g.op, g.level), quitConfirm: LEAVE_MSG });
     if (res.quit) return leaveRoom(); // left mid-round: no score is sent

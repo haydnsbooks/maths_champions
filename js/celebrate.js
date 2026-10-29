@@ -1,11 +1,12 @@
 /**
  * RESULTS & CELEBRATION — shared by the teacher screen and student screens.
- * Celebrate.results(el, {teams, myTeam, me, showMembers, rankBy, big})
- * Celebrate.trophy(t, cls) -> HTML for one golden trophy emoji (also used by the trophy cabinet).
+ * Celebrate.results(el, {teams, myTeam, me, showMembers, penalty, odds, big})
+ * Celebrate.trophy(t, cls) -> HTML for one golden (or platinum) trophy emoji (also used by the trophy cabinet).
+ * Celebrate.decision(t, odds) -> "Put it in my cabinet / Re-roll" buttons for an undecided trophy. js/student.js wires them up.
  *
  * Placings come from the server (team.rank):
  *  - rank null = no result (no correct answers): no place, no medal, listed last as "No result".
- *  - Teams can share a rank (exactly the same time and points). Every team ranked 1st is a winner.
+ *  - Teams can share a rank (exactly the same time). Every team ranked 1st is a winner.
  *  - Times normally show 2 decimal places. If two teams would show the same time but their real times differ,
  *    both show more decimal places (3rd, 4th, ...) until the difference is visible, so the placing makes sense.
  */
@@ -42,8 +43,26 @@
     return t.correct > 0 ? i + 1 : null;
   }
 
-  /** A trophy emoji drawn in gold (the colour comes from the .trophy CSS filter). */
-  function trophy(t, cls) { return '<span class="trophy' + (cls ? ' ' + cls : '') + '" role="img" aria-label="' + esc(t.n) + '">' + esc(t.e) + '</span>'; }
+  /** A trophy emoji drawn in gold, or platinum if t.plat (the colour comes from the .trophy / .trophy.plat CSS filters). */
+  function trophy(t, cls) {
+    return '<span class="trophy' + (t.plat ? ' plat' : '') + (cls ? ' ' + cls : '') + '" role="img" aria-label="' + esc(trophyName(t)) + '">' + esc(t.e) + '</span>';
+  }
+  function trophyName(t) { return (t.plat ? 'Platinum ' : '') + t.n; }
+  function pct(x) { return Math.round(x * 1000) / 10 + '%'; }
+
+  /** Keep / re-roll buttons for an undecided trophy. odds = {platinum, lose}. */
+  function decision(t, odds) {
+    odds = odds || { platinum: 0.05, lose: 0.95 };
+    var stay = 1 - odds.platinum - odds.lose;
+    return '<div class="decide" data-decide-for="' + esc(t.id) + '">' +
+      '<div class="decide-btns">' +
+        '<button class="btn primary" data-decide="keep">🏆 Put it in my cabinet</button>' +
+        '<button class="btn reroll" data-decide="reroll">🎲 Re-roll</button>' +
+      '</div>' +
+      '<div class="decide-odds">Re-roll: <b>' + pct(odds.platinum) + '</b> chance it turns <b>platinum</b>, ' +
+        '<b>' + pct(odds.lose) + '</b> chance you <b>lose it</b>' + (stay > 0.0001 ? ', ' + pct(stay) + ' it stays gold' : '') + '.</div>' +
+    '</div>';
+  }
 
   function results(el, o) {
     var teams = (o.teams || []).map(function (t, i) { var c = Object.assign({}, t); c.rank = rankOf(t, i); return c; });
@@ -56,6 +75,7 @@
     var noOne = !winners.length;
     var tie = winners.length > 1;
     var iWon = winners.some(function (t) { return t.index === mine; });
+    var pen = o.penalty !== undefined ? o.penalty : 1;
 
     var head = noOne
       ? '<div class="winner no-result"><h1>No results this round</h1>' +
@@ -76,11 +96,13 @@
         trophy(o.me.trophy, 'xl') +
         '<div class="trophy-won-text"><div class="trophy-won-kicker">You won a trophy!</div>' +
         '<div class="trophy-won-name">' + esc(o.me.trophy.n) + '</div>' +
-        '<div class="trophy-won-note">It\'s waiting in your 🏆 Trophy cabinet.</div></div>' +
+        '<div class="trophy-won-note">What will you do with it?</div></div>' +
+        decision(o.me.trophy, o.odds) +
       '</div>' : '';
 
     var me = o.me ? '<div class="me-card">' +
-        '<div><b>You:</b> ' + o.me.correct + ' correct · ' + o.me.wrong + ' wrong · ' + fmtTime(o.me.avgTime) + ' each · ' + o.me.points + ' pts</div>' +
+        '<div><b>You:</b> ' + o.me.correct + ' correct · ' + o.me.wrong + ' wrong' + (o.me.wrong ? ' (+' + (o.me.wrong * pen) + ' s)' : '') +
+          ' · <b>' + fmtTime(o.me.avgTime) + '</b> per correct answer</div>' +
         (o.me.levelUp ? '<div class="levelup">⬆️ Level up! You\'re now on level ' + o.me.newLevel + '</div>' : '') +
         (o.me.saved === false ? '<div class="muted">This round was too short to count towards your levels.</div>' : '') +
       '</div>' : '';
@@ -91,25 +113,15 @@
       }).join('');
     };
 
-    /** True when another team has exactly the same time (or points) but a different place, so the tie-break decided it. */
-    var tieBroken = function (t) {
-      if (t.rank === null) return false;
-      return teams.some(function (u) {
-        if (u === t || u.rank === null || u.rank === t.rank) return false;
-        return o.rankBy === 'points' ? u.points === t.points : Math.abs(raw(u) - raw(t)) < 1e-9;
-      });
-    };
-
     var rows = teams.filter(function (t) { return t.rank !== 1; }).map(function (t) {
       var placed = t.rank !== null;
-      var note = tieBroken(t) ? (o.rankBy === 'points' ? 'same points · placed on time' : 'same time · placed on points') : '';
       var members = o.showMembers && t.members ? '<div class="members">' + memberChips(t) + '</div>' : '';
       return '<li class="rank-row' + (t.index === mine ? ' mine' : '') + (placed ? '' : ' unranked') + '" style="--team:' + t.hex + '">' +
         '<span class="rank">' + (placed ? (medal[t.rank - 1] || t.rank) : '–') + '</span>' +
         '<span class="team-emoji">' + t.emoji + '</span>' +
         '<span class="team-name">' + esc(t.name) + (t.index === mine ? ' <em>(you)</em>' : '') + '</span>' +
         '<span class="team-stat">' + (placed ? fmtTime(raw(t), t.dp) : 'No result') +
-          '<small>' + t.correct + ' correct · ' + t.points + ' pts' + (note ? '<br>' + note : '') + '</small></span>' +
+          '<small>' + t.correct + ' correct · ' + t.wrong + ' wrong</small></span>' +
         members + '</li>';
     }).join('');
 
@@ -119,7 +131,7 @@
     var anyUnplaced = teams.some(function (t) { return t.rank === null; });
     el.innerHTML = '<div class="results' + (o.big ? ' big' : '') + '">' + head + winnerMembers + won + me +
       (rows ? '<ol class="ranks">' + rows + '</ol>' : '') +
-      '<p class="muted small center">Ranked by ' + (o.rankBy === 'points' ? 'total points' : 'average time per correct answer (lower is better)') +
+      '<p class="muted small center">Ranked by time per correct answer, with ' + pen + ' s added for every wrong answer (lower is better)' +
       (anyUnplaced && !noOne ? '. A team with no correct answers gets no place.' : '') + '</p></div>';
     if (!noOne && o.confetti !== false) confetti(o.big ? 6000 : 3500);
   }
@@ -151,5 +163,5 @@
     })();
   }
 
-  window.Celebrate = { results: results, confetti: confetti, fmtTime: fmtTime, trophy: trophy, decimals: decimals };
+  window.Celebrate = { results: results, confetti: confetti, fmtTime: fmtTime, trophy: trophy, trophyName: trophyName, decision: decision, decimals: decimals };
 })();

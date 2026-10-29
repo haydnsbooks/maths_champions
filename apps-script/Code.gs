@@ -15,6 +15,10 @@
  * not here, so they can be changed without redeploying.
  */
 var CONFIG = {
+  // Which version of the server code this is. js/config.js has the matching SERVER_VERSION; if they differ,
+  // the teacher page shows a warning that Apps Script is running old code. Change BOTH when the server changes.
+  SERVER_VERSION: 9,
+
   // Number of levels per operation. Must match js/levels.js.
   LEVEL_COUNTS: { mul: 18, div: 18, add: 13, sub: 11 },
   OPS: ['add', 'sub', 'mul', 'div'],
@@ -29,9 +33,9 @@ var CONFIG = {
   MIN_PASSWORD_LENGTH: 4,      // students choose their own password on first log-in
 
   // ---- Scoring ----
-  POINTS_CORRECT: 10,
-  POINTS_WRONG: -5,
-  RANK_BY: 'avgTime',          // 'avgTime' = lowest average seconds per correct answer wins; 'points' = most points wins
+  // Time per correct answer = (seconds played + WRONG_PENALTY_SEC for every wrong answer) / correct answers.
+  // Used for winning a class round AND for fluency levels. Lower is better. There are no points.
+  WRONG_PENALTY_SEC: 1,
 
   // ---- Team balancing ----
   // Each student's expected seconds-per-correct = their average time at THEIR current level for the chosen operation.
@@ -43,8 +47,11 @@ var CONFIG = {
 
   // ---- Trophy cabinet ----
   // Every player on the winning team of a class round gets the same trophy (picked at random from this list).
-  // The shelves are emptied every Sunday at 00:00 Perth time; the student's favourite (top shelf) is kept.
-  // The emoji are shown gold on screen (a CSS filter in css/style.css), so any emoji works here.
+  // Straight after winning they choose: put it in the cabinet, or re-roll it (see REROLL_*).
+  // Each week they keep ONE trophy: at Sunday 00:00 Perth time the one they chose is locked into their cabinet
+  // for good and the rest of that week's trophies are cleared. If they didn't choose, their best one is kept
+  // (platinum first, then the newest).
+  // The emoji are shown gold (or platinum) on screen by CSS filters in css/style.css, so any emoji works here.
   TROPHIES: [
     ['🏆', 'Golden Cup'], ['👑', 'Crown of Olympus'], ['🦉', 'Owl of Athena'], ['⚡', 'Thunderbolt of Zeus'],
     ['🔱', 'Trident of Poseidon'], ['🏺', 'Golden Amphora'], ['🐎', 'Golden Pegasus'], ['🦁', 'Nemean Lion'],
@@ -54,7 +61,9 @@ var CONFIG = {
     ['🎭', 'Mask of Dionysus'], ['🐍', 'Serpent of Medusa'], ['⛵', 'Ship of the Argonauts'], ['🦚', 'Peacock of Hera'],
     ['🥇', 'Olympic Gold'], ['🌟', 'Star of Olympus'], ['🐬', 'Dolphin of Apollo'], ['🗿', 'Head of the Titan']
   ],
-  TROPHY_SHELF_MAX: 60,        // most trophies kept on the shelves in one week (oldest drop off first)
+  TROPHY_SHELF_MAX: 60,        // most trophies held in one week before the weekly keep (oldest drop off first)
+  REROLL_PLATINUM_CHANCE: 0.05, // re-roll: chance the trophy becomes platinum
+  REROLL_LOSE_CHANCE: 0.95,     // re-roll: chance the trophy is lost. Anything left over (1 - both) = stays gold and can be re-rolled again
 
   // ---- Timing / traffic ----
   START_DELAY_MS: 8000,        // countdown before a class game starts. Must be longer than the student lobby poll (js/config.js)
@@ -98,7 +107,7 @@ var CONFIG = {
 var SHEETS = {
   Students: ['id', 'name', 'password', 'active'],
   Profiles: ['id', 'profileJson', 'updated'],
-  Attempts: ['timestamp', 'id', 'name', 'mode', 'op', 'level', 'correct', 'wrong', 'seconds', 'avgTime', 'points', 'room'],
+  Attempts: ['timestamp', 'id', 'name', 'mode', 'op', 'level', 'correct', 'wrong', 'seconds', 'avgTime', 'unused', 'room'],
   Settings: ['key', 'value']
 };
 
@@ -307,7 +316,7 @@ function onOpen() {
  *     t = time of the last attempt (ms) — dust is counted from here
  *
  * Rules:
- *   attempt time   = seconds played / correct answers (wrong answers cost time, so they count against you)
+ *   attempt time   = (seconds played + WRONG_PENALTY_SEC (1 s) per wrong answer) / correct answers
  *   fluency time   = average of the last 3 attempts (or fewer, if fewer have been played) + dust
  *   dust           = 0.5 s for every new week (Monday) since the level was last played
  *   fluent         = at least MIN_ATTEMPTS_FOR_FLUENCY attempts (currently 1) AND fluency time <= cut-off
@@ -334,7 +343,11 @@ function cutoffs_() {
   return out;
 }
 
-function attemptTime_(seconds, correct) { return round2_(seconds / Math.max(correct, 1)); }
+/** Seconds per correct answer, with WRONG_PENALTY_SEC added for every wrong answer. Unrounded. */
+function rawTime_(seconds, correct, wrong) {
+  return (Number(seconds) + (Number(wrong) || 0) * CONFIG.WRONG_PENALTY_SEC) / Math.max(Number(correct) || 0, 1);
+}
+function attemptTime_(seconds, correct, wrong) { return round2_(rawTime_(seconds, correct, wrong)); }
 
 function levelStats_(entry, cutoff, now) {
   if (!entry || !entry.r || !entry.r.length) return { attempts: 0, avg: null, dust: 0, time: null, fluent: false, last: null };
@@ -406,33 +419,77 @@ function validOpLevel_(op, level) {
  * TROPHY CABINET
  * ---------------------------------------------------------------
  * Each student's cabinet is stored inside their profile JSON (Profiles sheet), so no new sheet is needed:
- *   profile.cab = { wk: 2912, fav: trophy | null, items: [trophy, ...newest first] }
- *   trophy      = { id, e: '🦉', n: 'Owl of Athena', op: 'mul', team: 'Azure Krakens', t: 1729500000000 }
+ *   profile.cab = { wk, items: [trophy, ...newest first], keep: id | null, locked: [trophy + {wk}, ...newest first] }
+ *   trophy      = { id, e: '🦉', n: 'Owl of Athena', op: 'mul', team: 'Azure Krakens', t: 1729500000000,
+ *                   plat: true (platinum) | absent, open: true (not decided yet: keep or re-roll) | absent }
  *
  * Rules:
- *  - Every player on the winning team of a class round (who sent in a result) gets the same trophy.
- *  - The student taps a trophy to make it their favourite: it moves to the top shelf. The old favourite
- *    goes back onto the shelves below.
- *  - A new trophy week starts every Sunday 00:00 Perth time. The shelves are emptied then; the favourite stays.
- *    Clearing happens whenever the cabinet is next read or changed, so no timed trigger is needed.
+ *  - Every player on the winning team of a class round (who sent in a result) gets the same trophy. It goes
+ *    into this week's trophies straight away, "open" (undecided).
+ *  - Undecided trophy: the student either puts it in the cabinet as it is (decides it), or re-rolls it:
+ *    REROLL_PLATINUM_CHANCE (5%) it becomes platinum, REROLL_LOSE_CHANCE (95%) it is lost, otherwise it stays
+ *    gold and undecided. They can choose on the win screen or later in the cabinet. Platinum can't be re-rolled.
+ *  - One trophy per week is kept: the student taps the one to keep. At the start of the next trophy week
+ *    (Sunday 00:00 Perth) that trophy is LOCKED into the cabinet for good and the week's other trophies are cleared.
+ *    If they didn't choose, their best trophy is kept: platinum first, then the newest.
+ *  - Locking happens whenever the cabinet is next read or changed, so no timed trigger is needed.
+ *  - Older cabinets (v6/v7) had a "favourite": it is locked in (or, if it was won this week, kept as this week's choice).
  */
+
+var DAY_MS_ = 86400000;
 
 /** Sunday-based week number in local time (day 0 = Thursday 1 Jan 1970, so day 3 is a Sunday). */
 function trophyWeek_(ms) {
-  var day = Math.floor((ms + CONFIG.TZ_OFFSET_HOURS * 3600000) / 86400000);
+  var day = Math.floor((ms + CONFIG.TZ_OFFSET_HOURS * 3600000) / DAY_MS_);
   return Math.floor((day + 4) / 7);
 }
 /** Time (ms) the given trophy week ends, i.e. the next Sunday 00:00 local time. */
 function trophyWeekEnds_(wk) {
-  return ((wk + 1) * 7 - 4) * 86400000 - CONFIG.TZ_OFFSET_HOURS * 3600000;
+  return ((wk + 1) * 7 - 4) * DAY_MS_ - CONFIG.TZ_OFFSET_HOURS * 3600000;
+}
+/** Time (ms) the given trophy week starts (Sunday 00:00 local time). */
+function trophyWeekStarts_(wk) { return trophyWeekEnds_(wk) - 7 * DAY_MS_; }
+
+function copyTrophy_(t) { var c = {}; Object.keys(t).forEach(function (k) { c[k] = t[k]; }); return c; }
+
+/** The trophy that will be locked in this week: the chosen one, else platinum first, then newest. */
+function weekKeeper_(cab) {
+  var items = cab.items || [], i;
+  if (cab.keep) for (i = 0; i < items.length; i++) if (items[i].id === cab.keep) return items[i];
+  var best = null;
+  items.forEach(function (t) {
+    if (!best || (!!t.plat !== !!best.plat ? !!t.plat : t.t > best.t)) best = t;
+  });
+  return best;
 }
 
-/** The student's cabinet, emptied (favourite kept) if a new trophy week has started. Mutates the profile. */
+/** Locks the week's keeper into the cabinet and clears the week. */
+function lockWeek_(cab) {
+  var k = weekKeeper_(cab);
+  if (k) {
+    var lockedT = copyTrophy_(k);
+    delete lockedT.open;
+    lockedT.wk = cab.wk;
+    cab.locked.unshift(lockedT);
+  }
+  cab.items = []; cab.keep = null;
+}
+
+/** The student's cabinet, after locking any finished week. Mutates the profile. */
 function cabinet_(profile, now) {
   var wk = trophyWeek_(now);
-  var cab = profile.cab || { wk: wk, fav: null, items: [] };
+  var cab = profile.cab || { wk: wk, items: [], keep: null, locked: [] };
   if (!cab.items) cab.items = [];
-  if (cab.wk !== wk) { cab.items = []; cab.wk = wk; }
+  if (!cab.locked) cab.locked = [];
+  if (cab.keep === undefined) cab.keep = null;
+  if (cab.wk === undefined) cab.wk = wk;
+  if (cab.fav) { // v6/v7 favourite
+    var fav = cab.fav; delete cab.fav;
+    var favWk = trophyWeek_(fav.t);
+    if (favWk === cab.wk) { cab.items.unshift(fav); cab.items.sort(function (a, b) { return b.t - a.t; }); cab.keep = fav.id; }
+    else { var lf = copyTrophy_(fav); lf.wk = favWk; cab.locked.unshift(lf); cab.locked.sort(function (a, b) { return b.wk - a.wk; }); }
+  }
+  if (cab.wk !== wk) { lockWeek_(cab); cab.wk = wk; }
   profile.cab = cab;
   return cab;
 }
@@ -445,35 +502,64 @@ function pickTrophy_(notEmoji) {
   return { e: t[0], n: t[1] };
 }
 
-/** Adds a trophy to a profile's shelves (mutates it). Returns the stored trophy. */
+/** Adds a won trophy to this week's trophies, undecided (mutates the profile). Returns the stored trophy. */
 function awardTrophy_(profile, trophy, op, teamName, now) {
   var cab = cabinet_(profile, now);
-  var item = { id: now.toString(36) + Math.random().toString(36).slice(2, 7), e: trophy.e, n: trophy.n, op: op, team: teamName, t: now };
+  var item = { id: now.toString(36) + Math.random().toString(36).slice(2, 7), e: trophy.e, n: trophy.n, op: op, team: teamName, t: now, open: true };
   cab.items.unshift(item);
-  if (cab.items.length > CONFIG.TROPHY_SHELF_MAX) cab.items.length = CONFIG.TROPHY_SHELF_MAX;
+  while (cab.items.length > CONFIG.TROPHY_SHELF_MAX) {
+    var drop = cab.items.pop();
+    if (drop.id === cab.keep) { cab.items.splice(cab.items.length - 1, 1, drop); } // never drop the chosen one
+  }
   return item;
 }
 
-/** Moves the tapped trophy to the top shelf; the previous favourite goes back onto the shelves. */
-function setFavourite_(profile, id, now) {
+function findItem_(cab, id) {
+  for (var i = 0; i < cab.items.length; i++) if (cab.items[i].id === id) return i;
+  return -1;
+}
+
+/**
+ * The student decides what to do with an undecided trophy.
+ * choice 'keep'   -> it goes in the cabinet as it is.          outcome 'kept'
+ * choice 'reroll' -> platinum (outcome 'platinum'), lost (outcome 'lost'), or stays gold and undecided ('gold').
+ * rnd: optional random number 0..1 (tests); the server always uses Math.random.
+ */
+function decideTrophy_(profile, id, choice, now, rnd) {
   var cab = cabinet_(profile, now);
-  if (cab.fav && cab.fav.id === id) return cab;
-  var idx = -1;
-  for (var i = 0; i < cab.items.length; i++) if (cab.items[i].id === id) { idx = i; break; }
-  if (idx < 0) throw new Error('That trophy isn\'t in your cabinet any more.');
-  var pick = cab.items.splice(idx, 1)[0];
-  if (cab.fav) {
-    cab.items.push(cab.fav);
-    cab.items.sort(function (a, b) { return b.t - a.t; });
+  var i = findItem_(cab, id);
+  if (i < 0) throw new Error('That trophy isn\'t in your cabinet any more.');
+  var t = cab.items[i];
+  if (!t.open) throw new Error('You\'ve already decided about this trophy.');
+  if (choice === 'keep') { delete t.open; return { outcome: 'kept', trophy: t }; }
+  if (choice !== 'reroll') throw new Error('Unknown choice');
+  var r = rnd === undefined ? Math.random() : rnd;
+  if (r < CONFIG.REROLL_PLATINUM_CHANCE) { t.plat = true; delete t.open; return { outcome: 'platinum', trophy: t }; }
+  if (r < CONFIG.REROLL_PLATINUM_CHANCE + CONFIG.REROLL_LOSE_CHANCE) {
+    cab.items.splice(i, 1);
+    if (cab.keep === id) cab.keep = null;
+    return { outcome: 'lost', trophy: null };
   }
-  cab.fav = pick;
+  return { outcome: 'gold', trophy: t };
+}
+
+/** The student picks which of this week's trophies to keep. */
+function setKeeper_(profile, id, now) {
+  var cab = cabinet_(profile, now);
+  if (findItem_(cab, id) < 0) throw new Error('That trophy isn\'t in your cabinet any more.');
+  cab.keep = id;
   return cab;
 }
 
 /** What the student app displays. */
 function cabinetView_(profile, now) {
   var cab = cabinet_(profile, now);
-  return { fav: cab.fav, items: cab.items, clearsAt: trophyWeekEnds_(cab.wk) };
+  var k = weekKeeper_(cab);
+  return {
+    week: { items: cab.items, keeper: k ? k.id : null, chosen: !!cab.keep, locksAt: trophyWeekEnds_(cab.wk) },
+    locked: cab.locked.map(function (t) { var c = copyTrophy_(t); c.from = trophyWeekStarts_(t.wk); return c; }),
+    odds: { platinum: CONFIG.REROLL_PLATINUM_CHANCE, lose: CONFIG.REROLL_LOSE_CHANCE }
+  };
 }
 
 
@@ -891,10 +977,11 @@ function submitResult_(student, round, correct, wrong, seconds) {
 /**
  * Ranks teams, saves every result to the sheet (one write), updates profiles, hands out trophies. Idempotent.
  * Ranking rules:
+ *  - Time per correct answer = (seconds played + WRONG_PENALTY_SEC per wrong answer) / correct answers. Lower wins.
  *  - A team with no correct answers (or no results at all) has no result: it gets no place (rank null) and is listed last.
  *  - Times are compared unrounded (avgRaw), so two teams that both show 4.37 s still get the right places.
  *    The screens show extra decimal places where needed.
- *  - Teams equal on time AND points share the place. If that place is 1st, every team on it gets the trophy.
+ *  - Teams with exactly the same time share the place. If that place is 1st, every team on it gets the trophy.
  *  - Nobody with a result -> no trophy at all.
  */
 function finishGame_(code) {
@@ -909,8 +996,7 @@ function finishGame_(code) {
 
     ids.forEach(function (id) {
       var sub = room.subs[id], a = g.assign[id];
-      var pts = sub.c * CONFIG.POINTS_CORRECT + sub.w * CONFIG.POINTS_WRONG;
-      var t = attemptTime_(sub.s, sub.c);
+      var t = attemptTime_(sub.s, sub.c, sub.w);
       var saved = sub.s >= CONFIG.MIN_ATTEMPT_SECONDS;
       var p = profiles[id] = profiles[id] || {};
       var before = opSummary_(p, g.op, cutoff, now).current;
@@ -918,39 +1004,41 @@ function finishGame_(code) {
         recordAttempt_(p, g.op, a.level, t, now);
         updates[id] = p;
         var name = room.players[id] ? room.players[id].name : '';
-        rows.push([new Date(now), id, name, 'class', g.op, a.level, sub.c, sub.w, round2_(sub.s), t, pts, room.code]);
+        // The last-but-one column used to hold points; it is left blank now (kept so older rows still line up).
+        rows.push([new Date(now), id, name, 'class', g.op, a.level, sub.c, sub.w, round2_(sub.s), t, '', room.code]);
       }
       var after = opSummary_(p, g.op, cutoff, now);
-      personal[id] = { correct: sub.c, wrong: sub.w, points: pts, avgTime: sub.c > 0 ? t : null, level: a.level, saved: saved,
-                       newLevel: after.current, levelUp: after.current > before, mastered: after.mastered };
+      personal[id] = { correct: sub.c, wrong: sub.w, penalty: sub.w * CONFIG.WRONG_PENALTY_SEC, avgTime: sub.c > 0 ? t : null,
+                       level: a.level, saved: saved, newLevel: after.current, levelUp: after.current > before, mastered: after.mastered };
     });
 
     var teams = g.teams.map(function (tm, i) {
-      var c = 0, w = 0, s = 0, pts = 0, played = 0;
+      var c = 0, w = 0, s = 0, played = 0;
       tm.members.forEach(function (id) {
         var sub = room.subs[id];
         if (!sub) return;
-        played++; c += sub.c; w += sub.w; s += sub.s; pts += sub.c * CONFIG.POINTS_CORRECT + sub.w * CONFIG.POINTS_WRONG;
+        played++; c += sub.c; w += sub.w; s += sub.s;
       });
+      var raw = c > 0 ? rawTime_(s, c, w) : null;
       return { index: i, name: tm.name, emoji: tm.emoji, hex: tm.hex, size: tm.members.length, played: played,
-               correct: c, wrong: w, points: pts, exp: tm.exp !== undefined ? tm.exp : null,
-               avgRaw: c > 0 ? s / c : null, avgTime: c > 0 ? round2_(s / c) : null };
+               correct: c, wrong: w, exp: tm.exp !== undefined ? tm.exp : null,
+               avgRaw: raw, avgTime: raw === null ? null : round2_(raw) };
     });
     teams = teams.filter(function (t) { return t.size > 0; }); // everyone on this team left
     teams.sort(function (a, b) {
       var ra = hasResult_(a), rb = hasResult_(b);
       if (ra !== rb) return ra ? -1 : 1;
-      if (CONFIG.RANK_BY === 'points') return b.points - a.points || cmpTime_(a, b);
-      return cmpTime_(a, b) || b.points - a.points;
+      return cmpTime_(a, b);
     });
     var prev = null;
     teams.forEach(function (t, i) {
       if (!hasResult_(t)) { t.rank = null; return; }
-      t.rank = prev && sameResult_(prev, t) ? prev.rank : i + 1;
+      t.rank = prev && cmpTime_(prev, t) === 0 ? prev.rank : i + 1;
       prev = t;
     });
 
     // Trophy: every player on the winning team(s) who sent in a result gets the same one. No result -> no trophy.
+    // Each player's copy is undecided until they put it in their cabinet or re-roll it.
     var winners = teams.filter(function (t) { return t.rank === 1; });
     if (winners.length) {
       var trophy = pickTrophy_(room.lastTrophy);
@@ -959,9 +1047,9 @@ function finishGame_(code) {
         win.trophy = trophy;
         g.teams[win.index].members.forEach(function (id) {
           if (!room.subs[id]) return;
-          awardTrophy_(profiles[id], trophy, g.op, win.name, now);
+          var item = awardTrophy_(profiles[id], trophy, g.op, win.name, now);
           updates[id] = profiles[id];
-          personal[id].trophy = trophy;
+          personal[id].trophy = { id: item.id, e: item.e, n: item.n };
         });
       });
     }
@@ -976,15 +1064,14 @@ function finishGame_(code) {
 }
 /** A team has a result when it answered at least one question correctly. */
 function hasResult_(t) { return t.correct > 0 && t.played > 0; }
-function rawTime_(t) { return t.avgRaw !== undefined && t.avgRaw !== null ? t.avgRaw : t.avgTime; }
+function teamTime_(t) { return t.avgRaw !== undefined && t.avgRaw !== null ? t.avgRaw : t.avgTime; }
 function cmpTime_(a, b) {
-  var x = rawTime_(a), y = rawTime_(b);
+  var x = teamTime_(a), y = teamTime_(b);
   if (x === null && y === null) return 0;
   if (x === null) return 1;
   if (y === null) return -1;
   return Math.abs(x - y) < 1e-9 ? 0 : x - y;
 }
-function sameResult_(a, b) { return cmpTime_(a, b) === 0 && a.points === b.points; }
 
 function newRound_(code) {
   return withLock_(function () {
@@ -1069,7 +1156,11 @@ function doPost(e) {
   try { req = JSON.parse(e.postData.contents); } catch (err) { return json_({ ok: false, error: 'Bad request' }); }
   return json_(handleRequest(req));
 }
-function doGet() { return json_({ ok: true, message: 'Fluency game API is running.', now: Date.now() }); }
+/** Open the /exec URL in a browser to see which version of the code Google is running. */
+function doGet() {
+  return json_({ ok: true, message: 'Fluency game API is running.', serverVersion: CONFIG.SERVER_VERSION,
+                 playAgainInstalled: typeof playAgain_ === 'function', now: Date.now() });
+}
 function json_(obj) { return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON); }
 
 /** Pure function (also used by the offline demo and tests). */
@@ -1104,8 +1195,20 @@ function startSession_(s) {
 }
 
 function rules_() {
-  return { pointsCorrect: CONFIG.POINTS_CORRECT, pointsWrong: CONFIG.POINTS_WRONG, rankBy: CONFIG.RANK_BY,
+  return { serverVersion: CONFIG.SERVER_VERSION, wrongPenaltySec: CONFIG.WRONG_PENALTY_SEC,
+           reroll: { platinum: CONFIG.REROLL_PLATINUM_CHANCE, lose: CONFIG.REROLL_LOSE_CHANCE },
            minAttemptSeconds: CONFIG.MIN_ATTEMPT_SECONDS, submitGraceMs: CONFIG.SUBMIT_GRACE_MS, levelCounts: CONFIG.LEVEL_COUNTS };
+}
+
+function keeperAction_(req) {
+  var s = authStudent_(req);
+  return withLock_(function () {
+    var now = Date.now(), p = getProfile_(s.id);
+    setKeeper_(p, String(req.id || ''), now);
+    var upd = {}; upd[s.id] = p;
+    saveProfiles_(upd);
+    return { cabinet: cabinetView_(p, now) };
+  });
 }
 
 var ACTIONS = {
@@ -1144,23 +1247,32 @@ var ACTIONS = {
     return { profile: profileView_(getProfile_(s.id)), rules: rules_() };
   },
 
-  /** The student's trophy cabinet (shelves are emptied each Sunday; the favourite stays). */
+  /** The student's trophy cabinet: this week's trophies (one will be kept) and the locked ones from past weeks. */
   cabinet: function (req) {
     var s = authStudent_(req);
-    return { cabinet: cabinetView_(getProfile_(s.id), Date.now()) };
+    return withLock_(function () {
+      var now = Date.now(), p = getProfile_(s.id), before = JSON.stringify(p.cab || null);
+      var view = cabinetView_(p, now);
+      if (JSON.stringify(p.cab) !== before) { var upd = {}; upd[s.id] = p; saveProfiles_(upd); } // a week was just locked in
+      return { cabinet: view };
+    });
   },
 
-  /** Puts the tapped trophy on the top shelf. */
-  setFavourite: function (req) {
+  /** An undecided trophy: req.choice 'keep' (put it in the cabinet as it is) or 'reroll' (platinum / lost / stays gold). */
+  trophyDecision: function (req) {
     var s = authStudent_(req);
     return withLock_(function () {
       var now = Date.now(), p = getProfile_(s.id);
-      setFavourite_(p, String(req.id || ''), now);
+      var r = decideTrophy_(p, String(req.id || ''), String(req.choice || ''), now);
       var upd = {}; upd[s.id] = p;
       saveProfiles_(upd);
-      return { cabinet: cabinetView_(p, now) };
+      return { outcome: r.outcome, trophy: r.trophy, cabinet: cabinetView_(p, now) };
     });
   },
+
+  /** Picks which of this week's trophies will be locked into the cabinet. (setFavourite = old name, for cached pages.) */
+  setKeeper: function (req) { return keeperAction_(req); },
+  setFavourite: function (req) { return keeperAction_(req); },
 
   practiceSubmit: function (req) {
     var s = authStudent_(req);
@@ -1171,12 +1283,11 @@ var ACTIONS = {
     var seconds = Math.max(0, Math.min(900, Number(req.seconds) || 0));
     if (seconds < CONFIG.MIN_ATTEMPT_SECONDS) return { saved: false, profile: profileView_(getProfile_(s.id)) };
     return withLock_(function () {
-      var now = Date.now(), p = getProfile_(s.id), t = attemptTime_(seconds, correct);
-      var pts = correct * CONFIG.POINTS_CORRECT + wrong * CONFIG.POINTS_WRONG;
+      var now = Date.now(), p = getProfile_(s.id), t = attemptTime_(seconds, correct, wrong);
       recordAttempt_(p, req.op, level, t, now);
       var upd = {}; upd[s.id] = p;
       saveProfiles_(upd);
-      appendAttempts_([[new Date(now), s.id, s.name, 'practice', req.op, level, correct, wrong, round2_(seconds), t, pts, '']]);
+      appendAttempts_([[new Date(now), s.id, s.name, 'practice', req.op, level, correct, wrong, round2_(seconds), t, '', '']]);
       return { saved: true, avgTime: t, profile: profileView_(p) };
     });
   },

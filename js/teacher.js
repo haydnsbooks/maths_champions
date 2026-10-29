@@ -46,6 +46,7 @@
         '<button class="btn small" id="nav-passwords">🔑 Passwords</button>' +
         '<button class="btn small" id="nav-settings">⚙️ Cut-offs</button>' +
         '<button class="btn small ghost" id="nav-out">Log out</button></nav></header>' +
+      versionWarning() +
       '<main id="room"></main></div>');
     on('#nav-overview', 'click', showOverview);
     on('#nav-passwords', 'click', function () { showPasswords(); });
@@ -55,6 +56,19 @@
     refresh();
   }
   function roomEl() { return app.querySelector('#room'); }
+
+  /** Shown when Google's copy of the server code is older (or newer) than this page expects. */
+  function versionWarning() {
+    var want = C.SERVER_VERSION, have = T.rules && T.rules.serverVersion;
+    if (!want || API.demo || have === want) return '';
+    return '<div class="card version-warn" role="alert"><b>⚠️ The Apps Script code is out of date.</b> ' +
+      'Google is running ' + (have ? 'version ' + esc(String(have)) : 'an older version') + '; this page needs version ' + want + '. ' +
+      'Some buttons (like Play again) won\'t work until it\'s updated.' +
+      '<ol><li>In Apps Script, open <b>Code.gs</b>, select all (Ctrl+A), delete, paste the whole new Code.gs, press <b>Save</b>.</li>' +
+      '<li>Check the file list on the left has no other .gs files.</li>' +
+      '<li><b>Deploy → Manage deployments → ✏️ Edit → Version: New version → Deploy</b>.</li>' +
+      '<li>Reload this page.</li></ol></div>';
+  }
 
   function drawNoRoom() {
     roomEl().innerHTML = '<div class="card narrow center"><div class="big-emoji">🏁</div><h2>Start a class game</h2>' +
@@ -230,7 +244,7 @@
         '<label class="toggle"><input type="checkbox" id="mem"' + (T.showMembers ? ' checked' : '') + '> Show team members</label>' +
         '<button class="btn ghost" id="lobby">Back to lobby</button><button class="btn ghost" id="close">Close room</button></div>';
     var draw = function (party) {
-      Celebrate.results(app.querySelector('#res'), { teams: room.results.teams, showMembers: T.showMembers, rankBy: T.rules.rankBy, big: true, confetti: party });
+      Celebrate.results(app.querySelector('#res'), { teams: room.results.teams, showMembers: T.showMembers, penalty: T.rules.wrongPenaltySec, big: true, confetti: party });
     };
     draw(T.shownResultsRound !== room.round);
     T.shownResultsRound = room.round;
@@ -254,7 +268,7 @@
   function showSettings() {
     stop();
     roomEl().innerHTML = '<div class="card narrow"><h2>⚙️ Fluency cut-offs</h2>' +
-      '<p>A student is <b>fluent</b> at a level when (average of their last 3 attempts + dust) is at or below this many seconds per correct answer.</p>' +
+      '<p>A student is <b>fluent</b> at a level when (average of their last 3 attempts + dust) is at or below this many seconds per correct answer. Each attempt\'s time includes ' + (T.rules.wrongPenaltySec || 1) + ' s added for every wrong answer.</p>' +
       Levels.ORDER.map(function (op) {
         return '<label>' + Levels.OPS[op].symbol + ' ' + Levels.OPS[op].name + ' (seconds)<input type="number" step="0.1" min="0.5" max="60" id="c-' + op + '" value="' + T.cutoffs[op] + '"></label>';
       }).join('') +

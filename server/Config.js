@@ -7,6 +7,10 @@
  * not here, so they can be changed without redeploying.
  */
 var CONFIG = {
+  // Which version of the server code this is. js/config.js has the matching SERVER_VERSION; if they differ,
+  // the teacher page shows a warning that Apps Script is running old code. Change BOTH when the server changes.
+  SERVER_VERSION: 9,
+
   // Number of levels per operation. Must match js/levels.js.
   LEVEL_COUNTS: { mul: 18, div: 18, add: 13, sub: 11 },
   OPS: ['add', 'sub', 'mul', 'div'],
@@ -21,9 +25,9 @@ var CONFIG = {
   MIN_PASSWORD_LENGTH: 4,      // students choose their own password on first log-in
 
   // ---- Scoring ----
-  POINTS_CORRECT: 10,
-  POINTS_WRONG: -5,
-  RANK_BY: 'avgTime',          // 'avgTime' = lowest average seconds per correct answer wins; 'points' = most points wins
+  // Time per correct answer = (seconds played + WRONG_PENALTY_SEC for every wrong answer) / correct answers.
+  // Used for winning a class round AND for fluency levels. Lower is better. There are no points.
+  WRONG_PENALTY_SEC: 1,
 
   // ---- Team balancing ----
   // Each student's expected seconds-per-correct = their average time at THEIR current level for the chosen operation.
@@ -35,8 +39,11 @@ var CONFIG = {
 
   // ---- Trophy cabinet ----
   // Every player on the winning team of a class round gets the same trophy (picked at random from this list).
-  // The shelves are emptied every Sunday at 00:00 Perth time; the student's favourite (top shelf) is kept.
-  // The emoji are shown gold on screen (a CSS filter in css/style.css), so any emoji works here.
+  // Straight after winning they choose: put it in the cabinet, or re-roll it (see REROLL_*).
+  // Each week they keep ONE trophy: at Sunday 00:00 Perth time the one they chose is locked into their cabinet
+  // for good and the rest of that week's trophies are cleared. If they didn't choose, their best one is kept
+  // (platinum first, then the newest).
+  // The emoji are shown gold (or platinum) on screen by CSS filters in css/style.css, so any emoji works here.
   TROPHIES: [
     ['🏆', 'Golden Cup'], ['👑', 'Crown of Olympus'], ['🦉', 'Owl of Athena'], ['⚡', 'Thunderbolt of Zeus'],
     ['🔱', 'Trident of Poseidon'], ['🏺', 'Golden Amphora'], ['🐎', 'Golden Pegasus'], ['🦁', 'Nemean Lion'],
@@ -46,7 +53,9 @@ var CONFIG = {
     ['🎭', 'Mask of Dionysus'], ['🐍', 'Serpent of Medusa'], ['⛵', 'Ship of the Argonauts'], ['🦚', 'Peacock of Hera'],
     ['🥇', 'Olympic Gold'], ['🌟', 'Star of Olympus'], ['🐬', 'Dolphin of Apollo'], ['🗿', 'Head of the Titan']
   ],
-  TROPHY_SHELF_MAX: 60,        // most trophies kept on the shelves in one week (oldest drop off first)
+  TROPHY_SHELF_MAX: 60,        // most trophies held in one week before the weekly keep (oldest drop off first)
+  REROLL_PLATINUM_CHANCE: 0.05, // re-roll: chance the trophy becomes platinum
+  REROLL_LOSE_CHANCE: 0.95,     // re-roll: chance the trophy is lost. Anything left over (1 - both) = stays gold and can be re-rolled again
 
   // ---- Timing / traffic ----
   START_DELAY_MS: 8000,        // countdown before a class game starts. Must be longer than the student lobby poll (js/config.js)

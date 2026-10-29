@@ -3,7 +3,8 @@
 ## ⚠️ How to hand over every update (Haydn's standing instruction, 26 Oct 2026)
 1. **Always give Haydn one zip of ALL the game's files** (the whole `fluency-game/` folder, not just the changed ones), as a download link, so he can upload everything to GitHub in one go.
 2. **Whenever server code changes, give ALL the Apps Script code in ONE file** (`apps-script/Code.gs`, rebuilt with `node tools/build-apps-script.js`), so he can select all → delete in Apps Script → paste the new code. Never ask him to edit or add individual server functions by hand.
-3. Then say in a line or two what to do: paste Code.gs + deploy a new version (if the server changed), and replace the files on GitHub.
+3. If the server changed, bump `SERVER_VERSION` in both `server/Config.js` and `js/config.js`, then rebuild Code.gs and run the tests.
+4. Then say in a line or two what to do: paste Code.gs + deploy a new version (if the server changed), and replace the files on GitHub.
 
 ## Decisions made in v1 (Oct 2026)
 - Stack: GitHub Pages (front end) + Google Apps Script web app bound to a Google Sheet (back end). Polling, not websockets.
@@ -74,15 +75,30 @@
 - **Near-ties.** Ranking now compares the unrounded time (`team.avgRaw`). Before, two teams that both rounded to e.g. 4.61 s were split on points even if one was really faster. Screens show a 3rd/4th… decimal place for any teams whose times would otherwise look the same (up to 6; `Celebrate.decimals`). Exactly equal time AND points → shared place; if that's 1st, every tied team gets the trophy ("A tie on Olympus!"). Exactly equal time but different points → placed on points, with a "same time · placed on points" note.
 - Tests: 110 checks (`node tests/run-tests.js`), including Play again (same/new/individual), no-result rounds, 2-decimal ties, exact ties and balancing quality. Also run end to end in a browser (demo mode, 12 simulated students, 3 rounds).
 
+## v8 changes (28 Oct 2026)
+- Haydn got "playAgain_ is not defined" when pressing Play again (live, Apps Script). The Code.gs delivered on 26 Oct does contain `playAgain_` and works when that exact file is run (checked). So Google was running a copy that didn't match the delivered file; the cause wasn't visible from here.
+- **Server version check:** `CONFIG.SERVER_VERSION` (server) and `SERVER_VERSION` (js/config.js) must match. The teacher page shows a red warning with the paste/deploy steps when they don't. Opening the `/exec` URL in a browser shows `serverVersion` and `playAgainInstalled`. **Bump both numbers whenever server code changes.**
+- New tests load `apps-script/Code.gs` on its own (the exact file Haydn pastes) and play rounds including Play again, and check Code.gs was rebuilt from the current server files.
+
+## v9 changes (29 Oct 2026, Haydn's requests) — SERVER_VERSION 9
+- **No points.** Removed from the play screen, results, practice results and the server (`POINTS_*`, `RANK_BY` gone). The Attempts sheet keeps its `points` column so old rows line up; new rows leave it blank. New sheets made by `setup()` call that column `unused`.
+- **Wrong answer = +1 s.** Time per correct answer = (seconds played + `WRONG_PENALTY_SEC` × wrong) / correct, everywhere: class ranking, each player's result, fluency levels (practice too) and so team balancing. Play screen: the Points box is now **Penalty +N s**, and the correct-answer reveal says "(+1 s)". Ranking: exact same time → shared place (points used to break ties).
+  - Haydn's words were "+1 sec to the timer for the next correct answer". Because time per correct is a total ÷ correct, adding 1 s to the next correct answer = adding 1 s to the total. Built so wrong answers *after* the last correct answer also count (otherwise last-second guesses would be free) — to confirm.
+- **Keep or re-roll** (`decideTrophy_` in `server/Trophies.js`, action `trophyDecision`). A won trophy starts "open" (undecided). On the win screen (or later in the cabinet) the student picks **Put it in my cabinet** or **🎲 Re-roll** (confirm box shows the odds). Re-roll: `REROLL_PLATINUM_CHANCE` 5% → platinum, `REROLL_LOSE_CHANCE` 95% → lost; any leftover chance → stays gold and undecided (only if the two are changed to add up to less than 100%). Platinum can't be re-rolled. Random number is drawn on the server. Undecided trophies count as gold when the week locks.
+- **One trophy kept per week** (`setKeeper_`, action `setKeeper`; old `setFavourite` still works). Cabinet = this week's trophies (tap → ⭐ Keep this one this week) + "Locked in for good" shelves (one per week, labelled "Week of <Sunday>"). At Sunday 00:00 Perth the chosen trophy is locked in permanently and the week is cleared, done lazily the next time the cabinet is read or changed (the `cabinet` action now saves the profile when that happens). No choice → best one: platinum first, then newest.
+  - `profile.cab` is now `{ wk, items, keep, locked }`. Old cabinets: a favourite from an earlier week is locked in; a favourite won this week becomes this week's chosen one.
+- Platinum look: `.trophy.plat` CSS filter (silver-white + cool glow). Confetti when a re-roll comes up platinum.
+- Tests: 121 (penalty maths, ranking with penalty, re-roll outcomes with set dice, about 5% platinum over 20,000 real rolls, weekly locking, auto-keep, migration, server actions). Checked in a browser with two student tabs: penalty display, win-screen choice, platinum re-roll, cabinet at desktop and phone width.
+
 ## Assumptions to confirm with Haydn
-- Winner = lowest team average time per correct answer (as specified). Points are shown but only used as a tie-break. Switch with `RANK_BY`.
-- Wrong answer penalty −5, correct +10 (values not specified).
+- Winner = lowest team time per correct answer (as specified), including 1 s per wrong answer (v9).
+- v9: wrong answers after the last correct answer still add 1 s; the penalty also applies to practice and fluency levels; re-roll is 5% platinum / 95% lost with no "stays gold" outcome; no weekly choice → best trophy (platinum, then newest) is kept; undecided trophies can still be decided in the cabinet until the week locks.
 - Current level = lowest non-fluent level, so dust on an earlier level pulls the student back to it.
 - Practice results count towards the profile.
 - Default cut-off 3 s for every operation until changed.
 - Single-digit numbers use 1–9 (not 0) in Addition L1–2 and Subtraction L1.
 - Team-count choices go up to 8 (`TEAM_COUNTS`); presence timeout 30 s.
-- Trophies (v6): a winning-team member whose result never arrived (e.g. flat iPad) gets no trophy; the favourite stays on the top shelf week after week until the student picks a different one; the shelves clear at the very start of Sunday (00:00), so trophies won on a Sunday sit on the shelves until the following Sunday.
+- Trophies (v6): a winning-team member whose result never arrived (e.g. flat iPad) gets no trophy; the week locks at the very start of Sunday (00:00), so trophies won on a Sunday belong to the week ending the following Sunday.
 - v7: balancing ignores dust (`BALANCE_ADD_DUST`); "Same teams" keeps sizes as they are after people leave (e.g. 4, 4, 2), only newcomers are evened out; a full tie (same time and points) shares 1st place and every tied team gets the trophy.
 
 ## Ideas not built yet
